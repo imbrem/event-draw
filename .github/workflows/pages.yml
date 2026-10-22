@@ -30,7 +30,16 @@ jobs:
         run: pnpm build
         env:
           VITE_BASE_PATH: /event-draw/
-      - run: pnpm exec playwright install --with-deps chromium webkit
+      - name: Install browser runtimes
+        timeout-minutes: 5
+        run: |
+          # Avoid stalls on the runner's Azure Ubuntu package mirror.
+          for source in /etc/apt/apt-mirrors.txt /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do
+            if [ -f "$source" ]; then
+              sudo sed -i 's|azure.archive.ubuntu.com|archive.ubuntu.com|g' "$source"
+            fi
+          done
+          pnpm exec playwright install --with-deps chromium webkit
       - name: Exercise the production app in Chromium and WebKit
         run: pnpm test:browser --reporter=line
         env:
