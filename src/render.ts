@@ -1,16 +1,16 @@
 import {
-  localize,
   measuredSamples,
   type Gesture,
   type Point,
   type Tool,
   type ViewBox,
   type VisibleShape,
+  type Range,
 } from './model.ts';
-import { gestureDelta, planErasure, selectionBounds, shapeInk } from './geometry.ts';
+import { gestureDelta, selectionBounds, shapeInk } from './geometry.ts';
 import { appendInkPath, paintInkPath, drawInk, prepareCanvas } from './ui/drawing.ts';
-import { DEFAULT_INK_POLICY, tryProcessInk } from './ink.ts';
 import { LiveInk } from './live-ink.ts';
+import { LiveEraser } from './live-eraser.ts';
 import { InkIndex } from './spatial.ts';
 const settled = new WeakMap<
   HTMLCanvasElement,
@@ -18,6 +18,27 @@ const settled = new WeakMap<
 >();
 
 const live = new WeakMap<Gesture, { processor: LiveInk; path: Path2D; count: number; generation: number }>();
+const erasers = new WeakMap<Gesture, LiveEraser>();
+const indices = new WeakMap<HTMLCanvasElement, { shapes: VisibleShape[]; index: InkIndex }>();
+// State transport preserves immutable shape snapshots. Retain at most the full
+// path and latest cut per snapshot; weak keys release old scene geometry.
+const inkPaths = new WeakMap<VisibleShape, { full?: Path2D[]; ranges?: Range[]; partial?: Path2D[] }>();
+function paths(shape: VisibleShape, ranges?: Range[]): Path2D[] {
+  const cached = inkPaths.get(shape) ?? {};
+  inkPaths.set(shape, cached);
+  if (ranges ? cached.ranges !== ranges : !cached.full) {
+    const paths = (ranges ?? [[shape.start_index, shape.end_index] as Range]).map((range) => {
+      const path = new Path2D();
+      appendInkPath(path, shapeInk(shape, range), shape.line_width);
+      return path;
+    });
+    if (ranges) {
+      cached.ranges = ranges;
+      cached.partial = paths;
+    } else cached.full = paths;
+  }
+  return (ranges ? cached.partial : cached.full)!;
+}
 export interface Scene {
   shapes: VisibleShape[];
   pending: Gesture[];
@@ -35,21 +56,25 @@ export function render(canvas: HTMLCanvasElement, scene: Scene) {
   const move = [scene.active, ...scene.pending].find((g) => g && !g.cancelled && g.tool === 'move-selection');
   const delta = move ? gestureDelta(move.data) : { x: 0, y: 0 };
   const moving = new Set(move?.shapeIds);
-  const shapes = scene.shapes.map((shape) =>
-    moving.has(shape.id)
-      ? { ...shape, offset_x: shape.offset_x + delta.x, offset_y: shape.offset_y + delta.y }
-      : shape,
-  );
+  const shapes = move
+    ? scene.shapes.map((shape) =>
+        moving.has(shape.id)
+          ? { ...shape, offset_x: shape.offset_x + delta.x, offset_y: shape.offset_y + delta.y }
+          : shape,
+      )
+    : scene.shapes;
   const eraser = [scene.active, ...scene.pending].find(
     (g) => g && !g.cancelled && g.tool.startsWith('erase'),
   );
-  const erased = new Map(
-    eraser
-      ? planErasure(shapes, measuredSamples(eraser.data), eraser.radius, eraser.tool === 'erase-strokes').map(
-          (e) => [e.shape.id, e.ranges],
-        )
-      : [],
-  );
+  let erased: Map<number, Range[]> | undefined;
+  if (eraser) {
+    let planner = erasers.get(eraser);
+    if (!planner) {
+      planner = new LiveEraser();
+      erasers.set(eraser, planner);
+    }
+    erased = planner.update(eraser, shapes);
+  }
   const key = JSON.stringify([
     canvas.width,
     canvas.height,
@@ -78,18 +103,19 @@ export function render(canvas: HTMLCanvasElement, scene: Scene) {
     context.drawImage(cache.canvas, 0, 0);
     context.restore();
   } else {
-    const visible = new InkIndex(shapes).query(scene.view);
+    let spatial = indices.get(canvas);
+    if (
+      !spatial ||
+      spatial.shapes.length !== shapes.length ||
+      shapes.some((s, i) => s !== spatial!.shapes[i])
+    ) {
+      spatial = { shapes: shapes.slice(), index: new InkIndex(shapes) };
+      indices.set(canvas, spatial);
+    }
+    const visible = spatial.index.query(scene.view);
     for (const shape of shapes.filter((s) => visible.has(s.id))) {
-      const ranges = erased.get(shape.id) ?? [[shape.start_index, shape.end_index] as [number, number]];
-      for (const range of ranges)
-        drawInk(
-          context,
-          shapeInk(shape, range),
-          shape.color,
-          shape.line_width,
-          shape.opacity,
-          shape.blend_mode,
-        );
+      for (const path of paths(shape, erased?.get(shape.id)))
+        paintInkPath(context, path, shape.color, shape.opacity, shape.blend_mode);
     }
     if (!move && !eraser) {
       const layer = cache?.canvas ?? document.createElement('canvas');

@@ -1,4 +1,5 @@
 import type { Tool } from '../model.ts';
+import { outlineIcon } from './icons.ts';
 
 export type PageTool = Tool | 'text';
 const TOOLS: { id: PageTool; label: string; name: string; description: string; icon: string }[] = [
@@ -65,11 +66,15 @@ export class ToolPicker {
   private current: PageTool = 'pen';
   private buttons = new Map<PageTool, HTMLButtonElement>();
   private availability = { disabled: true, whiteboard: false };
+  private visible: readonly PageTool[] = TOOLS.map((tool) => tool.id);
+  private arrangement = '';
 
   constructor(
     root: HTMLElement,
     private onChange: () => void,
+    private overflow?: HTMLElement,
   ) {
+    this.root = root;
     for (const tool of TOOLS) {
       const button = document.createElement('button');
       button.type = 'button';
@@ -79,13 +84,7 @@ export class ToolPicker {
         button.setAttribute('aria-keyshortcuts', 'T');
       }
       button.setAttribute('aria-label', tool.name);
-      button.innerHTML =
-        '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" ' +
-        'stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">' +
-        tool.icon +
-        '</svg><span>' +
-        tool.label +
-        '</span>';
+      button.innerHTML = outlineIcon(tool.icon) + '<span class="toolbar-label">' + tool.label + '</span>';
       button.onclick = () => {
         if (button.disabled || this.current === tool.id) return;
         this.select(tool.id);
@@ -93,6 +92,14 @@ export class ToolPicker {
       this.buttons.set(tool.id, button);
       root.append(button);
     }
+    this.render();
+  }
+  private root: HTMLElement;
+
+  configure(visible: readonly PageTool[]) {
+    if (new Set(visible).size !== visible.length || visible.some((id) => !this.buttons.has(id)))
+      throw new Error('Toolbar tools must be unique known tool IDs');
+    this.visible = [...visible];
     this.render();
   }
 
@@ -113,6 +120,16 @@ export class ToolPicker {
   }
 
   private render() {
+    // A tool chosen from Menu/keyboard remains visible even in a minimal layout.
+    const main = [...new Set([...this.visible, this.current])];
+    const key = main.join(',');
+    if (key !== this.arrangement) {
+      this.arrangement = key;
+      for (const id of main) this.root.append(this.buttons.get(id)!);
+      for (const [id, button] of this.buttons)
+        if (!main.includes(id)) (this.overflow ?? this.root).append(button);
+      if (this.overflow) this.overflow.hidden = main.length === this.buttons.size;
+    }
     const { disabled, whiteboard } = this.availability;
     for (const tool of TOOLS) {
       const button = this.buttons.get(tool.id)!;

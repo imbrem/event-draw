@@ -24,7 +24,8 @@
     "compact": "node --disable-warning=ExperimentalWarning scripts/compact.ts",
     "detect": "node --disable-warning=ExperimentalWarning scripts/detect.ts",
     "events": "node --disable-warning=ExperimentalWarning scripts/events.ts",
-    "bench:strokes": "node --disable-warning=ExperimentalWarning scripts/bench-strokes.ts"
+    "bench:strokes": "node --disable-warning=ExperimentalWarning scripts/bench-strokes.ts",
+    "bench:eraser": "node --disable-warning=ExperimentalWarning scripts/bench-eraser.ts"
   },
   "dependencies": {
     "@bokuweb/zstd-wasm": "^0.0.27",

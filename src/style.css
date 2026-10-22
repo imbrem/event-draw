@@ -101,6 +101,24 @@ main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .tool-picker { display: flex; gap: 4px; }
 .tool-picker button { display: flex; align-items: center; justify-content: center; gap: 7px; min-height: 44px; border-color: transparent; }
 .tool-picker svg { width: 21px; height: 21px; flex-shrink: 0; }
+.history-controls { display: flex; gap: 4px; }
+.history-controls button { display: flex; gap: 7px; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; }
+.history-controls svg { width: 21px; height: 21px; flex: none; }
+.thickness-controls { display: flex; flex-wrap: wrap; gap: 10px; }
+.thickness-controls label { gap: 5px; min-height: 44px; font-size: 11px; }
+.thickness-controls input { width: 90px; min-height: 32px; }
+.thickness-controls output { width: 3ch; font-variant-numeric: tabular-nums; }
+.thickness-preview { display: grid; place-items: center; width: 26px; height: 26px; flex: none; }
+.thickness-preview::after { content: ''; width: var(--size, 3px); height: var(--size, 3px); border-radius: 50%; background: currentColor; }
+.eraser-preview::after { background: white; border: 1.5px solid #527e86; }
+.ink-dock { container: drawing-toolbar / inline-size; }
+.ink-dock[data-labels=icons] .toolbar-label { display: none; }
+.toolbar-overflow { display: flex; flex-direction: column; align-items: start; gap: 10px; }
+.toolbar-overflow .ink-settings-panel { position: static; width: 100%; padding: 10px 0; border: 0; box-shadow: none; }
+#more-tools { flex-wrap: wrap; margin: 8px 0; }
+@container drawing-toolbar (max-width: 900px) {
+  .ink-dock[data-labels=auto] .toolbar-label { display: none; }
+}
 .tool-picker button[aria-pressed=true] { background: #e1e9e2; border-color: #b6c9bd; box-shadow: inset 0 -2px #325c5b; }
 #ink-settings { position: relative; }
 .ink-settings-panel { position: absolute; bottom: calc(100% + 12px); right: 0; width: 230px; padding: 14px; border: 1px solid #d9ded7; border-radius: 9px; background: #fffefa; box-shadow: 0 3px 20px #203b4220; }
@@ -144,11 +162,12 @@ pre { max-width: 100%; overflow: auto; font: 10px/1.5 ui-monospace, monospace; p
   #document { flex: 1; max-width: 150px; }
   #page-navigation { margin-left: auto; gap: 2px; }
   .ink-dock { gap: 4px; padding: 5px; }
-  .tool-picker { flex: 1 0 100%; justify-content: center; gap: 1px; flex-wrap: wrap; }
-  .tool-picker button { width: 44px; min-height: 44px; padding: 8px; }
-  .tool-picker button span { display: none; }
+  .ink-dock > .tool-picker { flex: 0 1 auto; justify-content: center; gap: 1px; flex-wrap: wrap; }
+  .tool-picker button { min-height: 44px; padding: 8px; }
+  .ink-dock:not([data-labels=labels]) .tool-picker button { width: 44px; }
+  .ink-dock[data-labels=auto] .toolbar-label { display: none; }
   .ink-dock > button, #ink-settings summary { font-size: 11px; padding: 6px; min-height: 44px; }
-  .paint-toolbar { order: -1; flex: 1 0 100%; justify-content: center; }
+  .ink-dock > .paint-toolbar, .ink-dock > .thickness-controls { order: -1; flex: 1 1 auto; justify-content: center; }
   .zoom-controls { justify-content: center; }
   .zoom-controls button { min-height: 44px; padding: 4px 10px; font-size: 10px; }
   .ink-settings-panel { position: fixed; bottom: 110px; right: 8px; }

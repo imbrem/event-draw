@@ -1,3 +1,4 @@
+import { planErasure } from './erasure.ts';
 import { tracePayloads } from './trace-codecs.ts';
 import { RawTraces } from './storage/raw-traces.ts';
 import { snapshotNotebook, type SnapshotOptions } from './storage/snapshot.ts';
@@ -18,7 +19,7 @@ import {
   type SelectionTransform,
   type PageSource,
 } from './model.ts';
-import { gestureDelta, planErasure, selectionBounds } from './geometry.ts';
+import { gestureDelta, selectionBounds } from './geometry.ts';
 import { DocumentStore } from './storage/documents.ts';
 import { databaseDiagnostics } from './storage/diagnostics.ts';
 import { InkStore } from './storage/ink-store.ts';

@@ -7,6 +7,8 @@ export * from './detection.ts';
 export * from './pipelines.ts';
 export * from './transformations.ts';
 export * from './geometry.ts';
+export * from './erasure.ts';
+export { LiveEraser } from './live-eraser.ts';
 export * from './replay.ts';
 export { Journal } from './journal.ts';
 export type { SqlDatabase, SqlValue, Row } from './storage/sql.ts';

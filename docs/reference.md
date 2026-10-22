@@ -104,8 +104,11 @@ a continuous scroll reader (choose a page to edit), and search across text objec
 notes and available PDF text in this notebook. Handwriting is not searched yet.
 
 **Menu** contains document/PDF management, blank-page controls, database viewers,
-exports and storage diagnostics. **Ink & actions** contains style, eraser size,
-finger drawing, processing policies and Clear ink. The bottom dock keeps the tools visible.
+exports and storage diagnostics. The bottom dock exposes common colors, pen/highlighter
+width and eraser diameter; **Ink & actions** contains finger drawing, processing policies
+and Clear ink. **Menu → Toolbar** selects Full/Minimal and Auto/Icons/Labels. Omitted
+controls move into Menu; selecting an overflow tool brings it into the dock while active.
+Preferences affect presentation only. Eraser diameter is twice the stored `eraser_radius`.
 
 The tool buttons show the active tool and can be activated with a click,
 tap, Space or Enter. Pan is available only on whiteboards. Tool changes are
@@ -688,6 +691,12 @@ JSON after every operation. The trusted baseline detector is bounded and runs in
 worker at contact completion; an untrusted research plugin still needs an isolated worker
 with enforceable time/memory budgets.
 
+Both eraser tools process only newly measured segments during contact, querying a spatial
+index and retaining prior cuts. Whole-stroke mode skips removed shapes. Scene geometry,
+placed vertices and unchanged Canvas paths are cached; a raw-update stream replacing
+pointermove summaries rebuilds the preview. Commit uses the same planner on the full raw
+path in the worker. No sensor samples are dropped. See [measurements and limits](stack.md#sustained-erasing).
+
 ## Code boundaries
 
 | Module | Responsibility |
@@ -696,19 +705,19 @@ with enforceable time/memory budgets.
 | `ink.ts`, `plugins.ts`, `storage/ink-store.ts` | Versioned processing stages, validated baked outputs and immutable identities |
 | `interactions.ts`, `transformations.ts`, `pipelines.ts`, `core.ts` | Lasso/touch policies, future multi-input/analysis/sync contracts and reusable entry point |
 | `detection.ts`, `storage/detection-store.ts` | Replaceable rectangle script, validation, derived objects and activation history |
-| `geometry.ts` | Pure path/range, erasing, lasso and selection calculations |
+| `geometry.ts`, `erasure.ts` | Pure path/range, lasso, selection and incremental erasing |
 | `journal.ts`, `storage/` | Atomic app operations, SQLite queries and schema/reset |
 | `database.ts`, `db.worker.ts` | Worker transport, WASM initialization and persistent storage |
 | `pages.ts` | Page presets and disposable whiteboard viewports |
-| `ui/tool-picker.ts`, `ui/shell.ts` | Tool-button component and page markup |
-| `ui/ink-controls.ts` | Registry-driven policy controls and separate pen/highlighter paint preferences |
+| `ui/tool-picker.ts`, `ui/toolbar.ts`, `ui/shell.ts` | Tool selection, configurable layout and page markup |
+| `ui/ink-controls.ts`, `ui/paint-controls.ts`, `ui/thickness-controls.ts` | Independent policy, paint memory and width/eraser presentation |
 | `text.ts`, `ui/content-renderers.ts` | Shared Markdown/math rendering and trusted format adapters |
 | `storage/object-store.ts`, `ui/text-editor.ts`, `ui/page-objects.ts` | Immutable content, autosaved object drafts and positioned content/region layer |
 | `ui/page-navigation.ts`, `ui/notebook-location.ts` | Numbered navigation and disposable location preference |
 | `ui/page-surface.ts`, `page-sources.ts` | Fit/pinch/layout and extensible cancellable background rendering |
 | `ui/page-browser.ts`, `ui/pdf-text.ts`, `pdf/export.ts` | Lazy grid/continuous reader, search/text selection and flattened export |
 | `ui/notebook-files.ts`, `ui/notebook-backups.ts`, `storage/notebooks.ts` | Portable files, recovery snapshots and validated atomic replacement |
-| `live-ink.ts`, `spatial.ts`, `state-transport.ts` | Incremental previews, disposable ink index and worker deltas |
+| `live-ink.ts`, `live-eraser.ts`, `spatial.ts`, `state-transport.ts` | Incremental previews, disposable ink index and worker deltas |
 | `pdf/source.ts`, `pdf/library.ts` | Content backend contract, URL reading, digest policy and PDF.js cache |
 | `storage/documents.ts` | Document name/content index and page topology transactions |
 | `ui/canvas.ts` | Pointer lifecycle, pointer capture and frame scheduling |

@@ -1,11 +1,22 @@
-import { lassoShapes, planErasure, shapePath, insidePolygon } from './geometry.ts';
+import { planErasure } from './erasure.ts';
+import { lassoShapes, shapePath, insidePolygon } from './geometry.ts';
 import type { Algorithm } from './ink.ts';
 import type { Point, Style, VisibleShape } from './model.ts';
 import { PluginRegistry } from './plugins.ts';
 
-export type LassoPolicy = (shapes: readonly VisibleShape[], loop: Point[], options: Algorithm['options']) => number[];
-export interface TouchEdit { shapeId: number; style: Style }
-export type TouchTransformer = (input: { shapes: VisibleShape[]; path: Point[]; radius: number; style: Style }, options: Algorithm['options']) => TouchEdit[];
+export type LassoPolicy = (
+  shapes: readonly VisibleShape[],
+  loop: Point[],
+  options: Algorithm['options'],
+) => number[];
+export interface TouchEdit {
+  shapeId: number;
+  style: Style;
+}
+export type TouchTransformer = (
+  input: { shapes: VisibleShape[]; path: Point[]; radius: number; style: Style },
+  options: Algorithm['options'],
+) => TouchEdit[];
 export const DEFAULT_LASSO: Algorithm = { id: 'touch-or-enclose@1', options: {} };
 export const DEFAULT_TOUCH: Algorithm = { id: 'restyle-touched@1', options: {} };
 
@@ -30,13 +41,23 @@ export class InteractionPolicies {
 }
 export function createInteractionPolicies() {
   const registry = new InteractionPolicies();
-  registry.lassos.set('touch-or-enclose@1', (shapes, loop) => lassoShapes([...shapes], loop).map((s) => s.id));
+  registry.lassos.set('touch-or-enclose@1', (shapes, loop) =>
+    lassoShapes([...shapes], loop).map((s) => s.id),
+  );
   // Deliberately a vertex test: sparse segments may leave a concave polygon.
-  registry.lassos.set('vertices-inside@1', (shapes, loop) => loop.length < 3 ? [] : shapes.filter((s) => {
-    const points = shapePath(s); return points.length > 0 && points.every((p) => insidePolygon(p, loop));
-  }).map((s) => s.id));
+  registry.lassos.set('vertices-inside@1', (shapes, loop) =>
+    loop.length < 3
+      ? []
+      : shapes
+          .filter((s) => {
+            const points = shapePath(s);
+            return points.length > 0 && points.every((p) => insidePolygon(p, loop));
+          })
+          .map((s) => s.id),
+  );
   registry.touches.set('restyle-touched@1', ({ shapes, path, radius, style }) =>
-    planErasure(shapes, path, radius, true).map(({ shape }) => ({ shapeId: shape.id, style })));
+    planErasure(shapes, path, radius, true).map(({ shape }) => ({ shapeId: shape.id, style })),
+  );
   return registry;
 }
 export const interactionPolicies = createInteractionPolicies();

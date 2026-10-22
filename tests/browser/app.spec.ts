@@ -172,6 +172,59 @@ test('both erasers split or delete geometry and undo restores original raw refer
   await expect(page.locator('#counts')).toContainText('1 visible');
 });
 
+test('sustained eraser preview matches the committed scene and cancellation restores ink', async ({ page }) => {
+  await page.goto('./');
+  await expect(page.locator('#save-state')).toHaveText('Saved');
+  for (const y of [150, 190, 230, 270]) await stroke(page, [[100, y], [500, y]]);
+  const canvas = page.locator('#canvas');
+  const before = await canvas.screenshot();
+  for (const tool of ['erase-parts', 'erase-strokes']) {
+    await page.locator(`[data-tool="${tool}"]`).click();
+    // Keep contact down across many paint frames, including repeated passes
+    // over removed ink. Synthetic events give both engines the same stream.
+    await canvas.evaluate(async (element) => {
+      const c = element as HTMLCanvasElement, rect = c.getBoundingClientRect();
+      c.setPointerCapture = () => {};
+      const send = (type: string, x: number, y: number) => c.dispatchEvent(new PointerEvent(type, {
+        pointerId: 99, pointerType: 'pen', isPrimary: true, button: 0, buttons: 1,
+        clientX: rect.x + x / Number(c.dataset.viewWidth) * rect.width,
+        clientY: rect.y + y / Number(c.dataset.viewHeight) * rect.height, bubbles: true,
+      }));
+      send('pointerdown', 200, 120);
+      for (let i = 1; i <= 90; i++) {
+        send('pointermove', 200 + i, 120 + i % 30 * 7);
+        if (i % 3 === 0) await new Promise(requestAnimationFrame);
+      }
+      send('pointerleave', 0, 0); // hide the cursor when comparing ink pixels
+      await new Promise(requestAnimationFrame);
+    });
+    const preview = await canvas.screenshot();
+    expect(preview).not.toEqual(before);
+    await canvas.evaluate((element) => {
+      const c = element as HTMLCanvasElement, rect = c.getBoundingClientRect();
+      c.dispatchEvent(new PointerEvent('pointerup', { pointerId: 99, pointerType: 'pen', button: 0, buttons: 0,
+        clientX: rect.x + 290 / Number(c.dataset.viewWidth) * rect.width,
+        clientY: rect.y + 120 / Number(c.dataset.viewHeight) * rect.height }));
+    });
+    await expect(page.locator('#save-state')).toHaveText('Saved');
+    expect(await canvas.screenshot()).toEqual(preview);
+    await page.locator('#undo').click();
+    expect(await canvas.screenshot()).toEqual(before);
+    // Replay the same path with cancellation: no persisted visibility changes.
+    await canvas.evaluate((c) => {
+      const rect = c.getBoundingClientRect();
+      const options = { pointerId: 100, pointerType: 'pen', button: 0, buttons: 1,
+        clientX: rect.x + 200 / Number((c as HTMLCanvasElement).dataset.viewWidth) * rect.width,
+        clientY: rect.y + 190 / Number((c as HTMLCanvasElement).dataset.viewHeight) * rect.height };
+      c.dispatchEvent(new PointerEvent('pointerdown', options));
+      c.dispatchEvent(new PointerEvent('pointercancel', options));
+      c.dispatchEvent(new PointerEvent('pointerleave', options));
+    });
+    await expect(page.locator('#save-state')).toHaveText('Saved');
+    expect(await canvas.screenshot()).toEqual(before);
+  }
+});
+
 test('pages share one journal and whiteboards pan/zoom independently of raw geometry', async ({ page }) => {
   await page.goto('./');
   await expect(page.locator('#save-state')).toHaveText('Saved');
@@ -262,7 +315,7 @@ test('tool buttons support keyboard selection, contextual controls, and drawing/
   await expect(page.locator('#color-control')).toBeHidden();
   await tools.getByRole('button', { name: 'Erase parts', exact: true }).click();
   await page.locator('#ink-settings > summary').click();
-  await expect(page.getByLabel('Eraser radius')).toBeVisible();
+  await expect(page.getByLabel('Eraser size')).toBeVisible();
   await page.locator('#ink-settings > summary').click();
   await expect(page.locator('#selection-controls')).toBeHidden();
   await menu(page);
@@ -293,6 +346,82 @@ test('tool buttons support keyboard selection, contextual controls, and drawing/
   await expect(pen).toBeEnabled();
   await expect(pan).toBeDisabled();
   await expect(page.locator('#counts')).toContainText('1 visible');
+});
+
+test('main thickness controls preserve paint widths and record eraser diameter as radius', async ({ page }) => {
+  await page.goto('./');
+  await expect(page.locator('#save-state')).toHaveText('Saved');
+  await expect(page.locator('#width')).toBeVisible();
+  await expect(page.locator('#ink-settings')).not.toHaveAttribute('open');
+  await page.getByLabel('Pen width', { exact: true }).fill('7.5');
+  await expect(page.locator('#width-value')).toHaveText('7.5');
+  await stroke(page);
+  await page.getByRole('button', { name: 'Highlighter', exact: true }).click();
+  await expect(page.locator('#width')).toHaveValue('24');
+  await page.locator('#width').fill('30');
+  await page.getByRole('button', { name: 'Pen', exact: true }).click();
+  await expect(page.locator('#width')).toHaveValue('7.5');
+  await page.getByRole('button', { name: 'Highlighter', exact: true }).click();
+  await expect(page.locator('#width')).toHaveValue('30');
+  await page.getByRole('button', { name: 'Erase parts', exact: true }).click();
+  await expect(page.locator('#width-control')).toBeHidden();
+  await page.getByLabel('Eraser size', { exact: true }).fill('60');
+  await expect(page.locator('#radius-value')).toHaveText('60');
+  await expect(page.locator('#radius')).toHaveAttribute('aria-valuetext', '60 page units across');
+  await stroke(page, [[300, 100], [300, 200]]);
+  const db = await exported(page);
+  try {
+    expect(db.prepare('SELECT line_width FROM styles').get()!.line_width).toBe(7.5);
+    expect(db.prepare("SELECT eraser_radius FROM app_events WHERE kind='stroke.erase'").get()!.eraser_radius).toBe(30);
+  } finally { db.close(); }
+});
+
+test('minimal toolbar moves controls to Menu, keeps active overflow tools visible, and remembers presentation only', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('./');
+  await expect(page.locator('#save-state')).toHaveText('Saved');
+  const pen = page.getByRole('button', { name: 'Pen', exact: true });
+  await expect(pen.locator('.toolbar-label')).toBeHidden();
+  await expect(page.locator('#undo svg')).toHaveCount(1);
+  await expect(page.locator('#redo svg')).toHaveCount(1);
+  await expect(page.locator('#undo .toolbar-label')).toBeHidden();
+  const before = await exported(page);
+  const events = before.prepare('SELECT count(*) AS n FROM app_events').get()!.n;
+  before.close();
+  await menu(page);
+  await page.getByLabel('Toolbar layout', { exact: true }).selectOption('minimal');
+  await expect(page.locator('#toolbar-overflow #ink-settings')).toHaveCount(1);
+  await expect(page.locator('#tool-picker button')).toHaveCount(6);
+  await expect(page.locator('#more-tools button')).toHaveCount(2);
+  await menu(page, false);
+  await expect(page.locator('#drawing-toolbar #width')).toBeVisible();
+  await expect(page.locator('#drawing-toolbar #color')).toBeVisible();
+  await expect(page.locator('#browse-pages')).toBeHidden();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: 'test-results/minimal-toolbar-mobile.png', fullPage: true });
+  await menu(page);
+  await page.getByLabel('Toolbar labels', { exact: true }).selectOption('labels');
+  await expect(pen.locator('.toolbar-label')).toBeVisible();
+  expect(await pen.evaluate((button) => button.scrollWidth <= button.clientWidth)).toBe(true);
+  expect(await page.locator('#more-tools button').first().evaluate((button) => button.scrollWidth <= button.clientWidth)).toBe(true);
+  await page.getByLabel('Toolbar labels', { exact: true }).selectOption('auto');
+  await page.getByRole('button', { name: 'Restyle on touch', exact: true }).click();
+  await menu(page, false);
+  await expect(page.locator('#tool-picker [data-tool=restyle]')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByLabel('Touch size', { exact: true })).toBeVisible();
+  await pen.click();
+  await expect(page.locator('#tool-picker button')).toHaveCount(6);
+  const after = await exported(page);
+  try { expect(after.prepare('SELECT count(*) AS n FROM app_events').get()!.n).toBe(events); }
+  finally { after.close(); }
+  await page.reload();
+  await expect(page.locator('#save-state')).toHaveText('Saved');
+  await menu(page);
+  await expect(page.getByLabel('Toolbar layout', { exact: true })).toHaveValue('minimal');
+  await page.getByLabel('Toolbar layout', { exact: true }).selectOption('full');
+  await menu(page, false);
+  await expect(page.locator('#tool-picker button')).toHaveCount(8);
+  await expect(page.locator('#drawing-toolbar #ink-settings')).toBeVisible();
 });
 
 test('a second tab is blocked rather than silently drawing into an unrelated database', async ({ page }) => {

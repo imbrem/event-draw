@@ -1,4 +1,5 @@
 import { PAGE_PRESETS } from '../pages.ts';
+import { undoIcon, redoIcon } from './icons.ts';
 
 export function element<T extends HTMLElement = HTMLElement>(id: string): T {
   const value = document.getElementById(id);
@@ -44,6 +45,12 @@ export function mountShell() {
           <div class="row"><button id="page-earlier">Move earlier</button><button id="page-later">Move later</button></div>
           <button id="delete-page">Delete page</button>
         </section>
+        <section aria-label="Interface"><h2>Toolbar</h2>
+          <label>Layout <select id="toolbar-layout" aria-label="Toolbar layout"><option value="full">Full</option><option value="minimal">Minimal</option></select></label>
+          <label>Labels <select id="toolbar-labels" aria-label="Toolbar labels"><option value="auto">Automatic</option><option value="icons">Icons only</option><option value="labels">Show labels</option></select></label>
+          <div id="more-tools" class="tool-picker" role="group" aria-label="More tools" hidden></div>
+          <div id="toolbar-overflow" class="toolbar-overflow" hidden></div>
+        </section>
         <section><h2>Export & local state</h2>
           <details class="export-menu"><summary>Export SQLite ↓</summary><div class="export-options">
             <button id="export-full">Save notebook · full history</button><button id="export-visible">Visible state + provenance</button><button id="export-drawn">Just what’s drawn</button>
@@ -73,24 +80,29 @@ export function mountShell() {
       <div class="notebook-workspace"><div id="page-viewport" class="page-viewport"><div class="page-frame">
         <div id="paper" class="paper"><canvas id="pdf-canvas" aria-label="PDF page background" hidden></canvas><canvas id="canvas" aria-label="Drawing page"></canvas><div id="page-objects" class="page-objects"></div><div id="pdf-text" class="pdf-text" hidden></div></div>
       </div></div><aside id="text-panel" aria-label="Page text notes" hidden></aside></div>
-      <div class="ink-dock" aria-label="Drawing tools">
-        <div id="tool-picker" class="tool-picker" role="group" aria-label="Tools"></div>
-        <button id="undo" disabled title="Undo (⌘/Ctrl+Z)" aria-keyshortcuts="Meta+Z Control+Z">↶ Undo</button>
-        <button id="redo" disabled title="Redo (⌘/Ctrl+Shift+Z or Ctrl+Y)" aria-keyshortcuts="Meta+Shift+Z Control+Shift+Z Control+Y">↷ Redo</button><button id="browse-pages">Pages / Search</button>
-        <button id="toggle-text" aria-expanded="false" aria-controls="text-panel">Notes</button>
-        <div id="paint-toolbar" class="paint-toolbar"><div id="color-palette" class="color-palette"></div>
+      <div id="drawing-toolbar" class="ink-dock" aria-label="Drawing tools">
+        <div id="tool-picker" data-toolbar-section="tools" class="tool-picker" role="group" aria-label="Tools"></div>
+        <div class="history-controls" data-toolbar-section="history">
+          <button id="undo" disabled aria-label="Undo" title="Undo (⌘/Ctrl+Z)" aria-keyshortcuts="Meta+Z Control+Z">${undoIcon}<span class="toolbar-label">Undo</span></button>
+          <button id="redo" disabled aria-label="Redo" title="Redo (⌘/Ctrl+Shift+Z or Ctrl+Y)" aria-keyshortcuts="Meta+Shift+Z Control+Shift+Z Control+Y">${redoIcon}<span class="toolbar-label">Redo</span></button>
+        </div>
+        <button id="browse-pages" data-toolbar-section="pages">Pages / Search</button>
+        <button id="toggle-text" data-toolbar-section="notes" aria-expanded="false" aria-controls="text-panel">Notes</button>
+        <div id="paint-toolbar" data-toolbar-section="color" class="paint-toolbar"><div id="color-palette" class="color-palette"></div>
           <label id="color-control" title="Custom ink color"><input id="color" type="color" value="#203b42" aria-label="Ink color"></label></div>
-        <details id="ink-settings"><summary>Ink & actions</summary><div class="ink-settings-panel">
-          <label id="width-control">Width <input id="width" type="range" min="1" max="32" value="3" aria-label="Pen width"></label>
+        <div id="thickness-controls" data-toolbar-section="thickness" class="thickness-controls">
+          <label id="width-control"><span id="width-label">Width</span><span id="width-preview" class="thickness-preview" aria-hidden="true"></span><input id="width" type="range" min="1" max="32" step="0.5" value="3" aria-label="Pen width"><output id="width-value" for="width"></output></label>
+          <label id="eraser-control" hidden>Size <span id="radius-preview" class="thickness-preview eraser-preview" aria-hidden="true"></span><input id="radius" type="range" min="6" max="100" value="24" aria-label="Eraser size"><output id="radius-value" for="radius"></output></label>
+        </div>
+        <details id="ink-settings" data-toolbar-section="advanced"><summary>Ink & actions</summary><div class="ink-settings-panel">
           <div id="ink-policies"></div>
           <label>Lasso <select id="lasso-policy" aria-label="Lasso policy"></select></label>
-          <label id="eraser-control" hidden>Size <input id="radius" type="range" min="3" max="50" value="12" aria-label="Eraser radius"></label>
           <label><input id="touch" type="checkbox" checked> Finger drawing</label>
           <label><input id="show-boxes" type="checkbox" checked> Show detected boxes</label>
           <label><input id="select-pdf-text" type="checkbox"> Select PDF text</label>
           <button id="clear">Clear ink</button>
         </div></details>
-        <div class="zoom-controls"><button id="zoom-out" aria-label="Zoom out">−</button><button id="zoom-in" aria-label="Zoom in">+</button><button id="home-view">Fit page</button></div>
+        <div class="zoom-controls" data-toolbar-section="zoom"><button id="zoom-out" aria-label="Zoom out">−</button><button id="zoom-in" aria-label="Zoom in">+</button><button id="home-view">Fit page</button></div>
       </div>
       <div id="selection-controls" class="selection-controls" hidden>
         <span id="selection-count">0 selected</span><button id="delete-selection">Delete selected</button><button id="deselect">Deselect</button>

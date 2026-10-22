@@ -12,7 +12,7 @@ A research change to processing, exchange or UI should reuse the other boundarie
 | Trace encoding | `trace-codecs.ts`, `node-trace-codecs.ts`, `storage/raw-traces.ts` | Per-row codecs; CBOR + zstd by default, independent of observation schema |
 | Capture | `capture.ts`, `model.ts` | Preserve observations, optional fields, coalesced/predicted batches and clocks |
 | Processing | `ink.ts`, `plugins.ts`, `live-ink.ts` | Versioned smoothing/width/rejection and validated immutable outputs |
-| Interaction | `interactions.ts`, `geometry.ts` | Replaceable lasso and touch transforms; vector erasing |
+| Interaction | `interactions.ts`, `geometry.ts`, `erasure.ts`, `live-eraser.ts` | Replaceable lasso/touch transforms, append-only erasing and capture adapter |
 | Persistence | `journal.ts`, `storage/*`, `schema.sql` | Transactions, immutable resources, append-only effects and projections |
 | Identity | `storage/identity.ts`, `storage/events.ts` | Namespaces, logical clock, object registry and lifecycle events |
 | Exchange | `streams.ts`, `storage/event-stream.ts` | Framing, record bindings, transforms and reconstruction policy |
@@ -25,6 +25,8 @@ A research change to processing, exchange or UI should reuse the other boundarie
 `app.ts` coordinates the default shell and shared edit queue. It does not define raw capture
 schemas or exchange framing. `core.ts` builds a DOM-free JS library with TypeScript declarations;
 frontend rendering modules remain a separate browser layer.
+See [the current stack and portability boundaries](stack.md) for host dependencies,
+eraser performance measurements and a possible SQL analysis window.
 
 ## Identity
 
@@ -84,6 +86,14 @@ Complete per-object edit effects determine visibility, placement, style and cont
 `current_pages`, `current_documents`, `visible_shapes` and `visible_objects` project the
 latest effects. Mutable document/page tables are rebuildable FK/name caches. Replay restores
 effects and baked output, without depending on today's processor or command behavior.
+
+`storage/events.ts` centralizes the shared SQL edit envelope. Queryable references and
+common parameters (including the historical `eraser_radius` column) stay there;
+kind-specific parameters belong in `data_json` with its `data_version`. Prefer a
+namespaced kind/payload for a new experimental tool to another nullable column.
+An extension that changes state also needs complete effect rows and a projection;
+an arbitrary payload alone does not implement persistence or undo. The SQL schema
+is fixed for a notebook schema identity; exchange bindings can map it to other formats.
 
 ## Composable exchange
 
@@ -192,7 +202,30 @@ it is not a substitute for a rendered-state snapshot.
 The default shell has focused modules for document controls, color swatches, tool selection,
 navigation, file lifecycle and text editing. `FrontendHost` exposes state subscriptions,
 navigation, typed edit-command tuples and text insertion. Commands use the existing edit
-queue and Journal persistence. An installed extension receives its own DOM slot:
+queue and Journal persistence.
+
+The default toolbar is independently configurable. Omitted controls move to Menu;
+commands and their state are shared rather than duplicated. The UI exposes Full/Minimal
+and Auto/Icons/Labels choices; only presentation preferences go into local storage.
+For a trusted host build:
+
+```ts
+import { minimalToolbar } from './src/ui/toolbar.ts';
+
+startApp({ toolbar: {
+  ...minimalToolbar,
+  tools: ['text', 'pen', 'highlighter', 'erase-parts', 'erase-strokes', 'lasso'],
+  labels: 'auto',
+} });
+```
+
+`DrawingToolbar` arranges existing sections, `ToolPicker` owns tool selection,
+`PaintControls` remembers paint per pen/highlighter, and `ThicknessControls` presents
+width/touch diameter. The geometry/journal keep radius in page units. A contact snapshots
+its settings; changing layout or an idle slider writes no notebook event. Arbitrary new
+UI goes through the extension host rather than the toolbar's section IDs.
+
+An extension receives its own DOM slot:
 
 ```ts
 startApp({ extensions: [{

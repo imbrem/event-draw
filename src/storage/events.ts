@@ -15,8 +15,12 @@ export interface EventOptions {
   undoable?: boolean;
   undoOf?: number;
   redoOf?: number;
+  /** Kind-specific, versioned extension payload; keep sensor data in raw traces.
+   * New tools normally add payload fields, not columns to the shared envelope. */
   data?: unknown;
 }
+/** Central SQL envelope adapter. Rendering/replay use complete effect rows;
+ * parameters such as eraser_radius explain an edit but never recompute it. */
 export function recordEvent(db: SqlDatabase, kind: string, options: EventOptions = {}): number {
   insertRow(db, 'app_events', {
     occurred_at: new Date().toISOString(),

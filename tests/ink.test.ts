@@ -1,3 +1,4 @@
+import { planErasure } from '../src/erasure.ts';
 import type { InkData } from '../src/model.ts';
 import { tracePayloads } from '../src/trace-codecs.ts';
 import assert from 'node:assert/strict';
@@ -6,7 +7,7 @@ import { database, gesture, note } from './helpers.ts';
 import { createInkProcessors, DEFAULT_INK_POLICY, InkProcessors, policyJson, type InkPolicy } from '../src/ink.ts';
 import { createInteractionPolicies } from '../src/interactions.ts';
 import { Journal } from '../src/journal.ts';
-import { shapeInk, shapePath, planErasure, lassoShapes, selectionBounds } from '../src/geometry.ts';
+import { shapeInk, shapePath, lassoShapes, selectionBounds } from '../src/geometry.ts';
 
 const smooth: InkPolicy = { ...DEFAULT_INK_POLICY, smoothing: { id: 'moving-average@1', options: {} } };
 

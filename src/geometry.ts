@@ -9,6 +9,8 @@ import {
 import { sliceInk, type InkPoint, type InkOutput } from './ink.ts';
 
 const EPS = 1e-8;
+/** Conservative broad-phase padding for the squared-distance predicates. */
+export const GEOMETRY_BOUNDS_PAD = Math.sqrt(EPS);
 export function interpolate(a: Point, b: Point, t: number): Point {
   return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
 }
@@ -167,10 +169,20 @@ export function remainingRanges(
   }
   const removed: Range[] = [];
   for (let i = Math.floor(range[0]); i < range[1]; i++) {
+    const p = points[i],
+      q = points[i + 1];
+    const pad = radius + Math.max(radii?.[i] ?? 0, radii?.[i + 1] ?? 0) + GEOMETRY_BOUNDS_PAD;
     for (const [a, b] of segments) {
+      if (
+        Math.max(p.x, q.x) + pad < Math.min(a.x, b.x) ||
+        Math.min(p.x, q.x) - pad > Math.max(a.x, b.x) ||
+        Math.max(p.y, q.y) + pad < Math.min(a.y, b.y) ||
+        Math.min(p.y, q.y) - pad > Math.max(a.y, b.y)
+      )
+        continue;
       for (const interval of capsuleIntervals(
-        points[i],
-        points[i + 1],
+        p,
+        q,
         a,
         b,
         radius + (radii?.[i] ?? 0),
@@ -190,36 +202,6 @@ export function remainingRanges(
   if (cursor < range[1] - EPS) kept.push([cursor, range[1]]);
   return kept;
 }
-export interface Erasure {
-  shape: VisibleShape;
-  ranges: Range[];
-}
-export function planErasure(
-  shapes: VisibleShape[],
-  path: Point[],
-  radius: number,
-  whole: boolean,
-): Erasure[] {
-  const result: Erasure[] = [];
-  for (const shape of shapes) {
-    const output = outputPoints(shape);
-    const points = placeInk(shape, output);
-    if (!points.length) continue;
-    const range: Range = [shape.start_index, shape.end_index];
-    const ranges = remainingRanges(
-      points,
-      range,
-      path,
-      radius,
-      points.map((p) => (p.widthFactor * shape.line_width) / 2),
-    );
-    if (ranges.length !== 1 || ranges[0][0] !== range[0] || ranges[0][1] !== range[1]) {
-      result.push({ shape, ranges: whole ? [] : ranges });
-    }
-  }
-  return result;
-}
-
 export function insidePolygon(p: Point, polygon: Point[]): boolean {
   let inside = false;
   for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {

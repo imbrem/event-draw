@@ -1,4 +1,6 @@
 import { StatusIndicators, defaultIndicators, type StatusIndicator } from './ui/status-indicators.ts';
+import { DrawingToolbar, type ToolbarConfig } from './ui/toolbar.ts';
+import { ThicknessControls } from './ui/thickness-controls.ts';
 import { DocumentControls } from './ui/document-controls.ts';
 import { FrontendExtensions, type FrontendExtension } from './ui/extensions.ts';
 import { EDIT_COMMANDS, type FrontendHost } from './frontend.ts';
@@ -18,7 +20,8 @@ import { NotebookLocation } from './ui/notebook-location.ts';
 import { mountShell, element } from './ui/shell.ts';
 import { DatabaseViewer } from './ui/viewer.ts';
 import { ToolPicker } from './ui/tool-picker.ts';
-import { InkControls, PaintControls } from './ui/ink-controls.ts';
+import { InkControls } from './ui/ink-controls.ts';
+import { PaintControls } from './ui/paint-controls.ts';
 import { TextEditor } from './ui/text-editor.ts';
 import { PageObjects } from './ui/page-objects.ts';
 import { objectInput } from './ui/text-editor.ts';
@@ -31,7 +34,11 @@ import { PdfText } from './ui/pdf-text.ts';
 import type { ClipboardInk } from './model.ts';
 
 export function startApp(
-  config: { extensions?: readonly FrontendExtension[]; indicators?: readonly StatusIndicator[] } = {},
+  config: {
+    extensions?: readonly FrontendExtension[];
+    indicators?: readonly StatusIndicator[];
+    toolbar?: ToolbarConfig;
+  } = {},
 ): () => void {
   mountShell();
   const db = new DatabaseClient(),
@@ -84,13 +91,26 @@ export function startApp(
     pageId = id;
     refresh();
   };
-  const tools = new ToolPicker(element('tool-picker'), () => {
-    selected.clear();
-    selectedObject = 0;
-    pageObjects.finishEditing();
-    refresh();
-  });
+  const tools = new ToolPicker(
+    element('tool-picker'),
+    () => {
+      selected.clear();
+      selectedObject = 0;
+      pageObjects.finishEditing();
+      refresh();
+    },
+    element('more-tools'),
+  );
   const paints = new PaintControls(element('color'), element('width'), element('color-palette'));
+  const thickness = new ThicknessControls(element('thickness-controls'));
+  const toolbar = new DrawingToolbar(
+    element('drawing-toolbar'),
+    element('toolbar-overflow'),
+    tools,
+    element('toolbar-layout'),
+    element('toolbar-labels'),
+    config.toolbar,
+  );
   const inkControls = new InkControls(element('ink-policies'));
   const lassoLabels: Record<string, string> = {
     'touch-or-enclose@1': 'Touch or enclose',
@@ -193,7 +213,7 @@ export function startApp(
       tool === 'restyle'
         ? DEFAULT_TOUCH
         : { id: element<HTMLSelectElement>('lasso-policy').value, options: {} },
-    radius: Number(element<HTMLInputElement>('radius').value),
+    radius: thickness.radius,
     cancelled: false,
     data: { deliveries: [] },
   });
@@ -220,7 +240,7 @@ export function startApp(
       view: view(),
       tool: tools.value === 'text' ? 'pen' : tools.value,
       selected: [...selected],
-      radius: Number(element<HTMLInputElement>('radius').value),
+      radius: thickness.radius,
     }),
     moveTargets(point) {
       const bounds = selectionBounds(shapes().filter((s) => selected.has(s.id)));
@@ -308,13 +328,18 @@ export function startApp(
     refresh();
   }
   function refresh() {
-    if (!state.objects.some((object) => object.id === selectedObject && object.page_id === pageId && object.rendered))
+    if (
+      !state.objects.some(
+        (object) => object.id === selectedObject && object.page_id === pageId && object.rendered,
+      )
+    )
       selectedObject = 0;
     selected = new Set([...selected].filter((id) => shapes().some((s) => s.id === id)));
     const busy = !ready || failed || active || writes > 0 || resetting || importing;
     const board = page()?.kind === 'whiteboard';
     tools.update({ disabled: busy, whiteboard: board });
     paints.select(tools.value === 'text' ? 'pen' : tools.value);
+    thickness.update(tools.value, busy);
     inkControls.update(busy);
     textEditor.update(
       pageId,
@@ -409,8 +434,6 @@ export function startApp(
     element('board-controls').hidden = !board;
     const painting = ['pen', 'highlighter', 'restyle'].includes(tools.value);
     element('paint-toolbar').hidden = !painting;
-    element('width-control').hidden = !painting;
-    element('eraser-control').hidden = !tools.value.startsWith('erase') && tools.value !== 'restyle';
     const box = view();
     canvas.dataset.viewWidth = String(box.width);
     canvas.dataset.viewHeight = String(box.height);
@@ -949,6 +972,8 @@ export function startApp(
     });
   refresh();
   return () => {
+    toolbar.close();
+    thickness.close();
     indicators.close();
     extensions?.close();
     files.close();

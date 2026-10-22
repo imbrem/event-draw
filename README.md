@@ -11,6 +11,9 @@ in Safari on your iPad or a desktop browser. Sign in to GitHub with repository r
 No Xcode or macOS update is needed for browser use.
 
 - Draw with Pen or Highlighter; choose a common color or a custom one.
+- Adjust width in the dock (eraser size is its diameter). **Menu → Toolbar → Minimal**
+  keeps tools, undo/redo, colors and thickness; other controls move into Menu.
+  Labels hide when space is limited; the label setting can override this.
 - Choose **A** (or **T**), tap the page and type Markdown with `$LaTeX$`, or choose plain text.
   Double-click text to edit; drag to move and use selection handles to resize/rotate. **Notes** manages linked notes/properties.
 - **⌘/Ctrl+Z** undoes; **⌘/Ctrl+Shift+Z** or **Ctrl+Y** redoes. Text editors keep native undo.
@@ -53,6 +56,7 @@ pnpm events replay events.jsonl reconstructed.sqlite3
 pnpm events export notebook.sqlite3 experiment.jsonl --adapter ./trusted-exchange.ts
 pnpm detect notebook.sqlite3 ./trusted-detector.mjs
 pnpm bench:strokes notebook.sqlite3  # lossless JSON/CBOR + zstd comparison
+pnpm bench:eraser                   # sustained batch vs incremental geometry
 ```
 
 ## Architecture
@@ -80,6 +84,6 @@ flowchart LR
 
 Read the [architecture and extension examples](docs/README.md),
 [feature/schema reference](docs/reference.md), [trace formats/compression results](docs/trace-storage.md),
-and [SQLite schema](src/schema.sql).
+[stack and portability](docs/stack.md), and [SQLite schema](src/schema.sql).
 The [CI workflow](.github/workflows/pages.yml) tests production builds in Chromium/WebKit
 and deploys `main` to the private Pages site after checks pass.
