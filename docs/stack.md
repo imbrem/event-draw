@@ -61,7 +61,8 @@ paging very large notebooks; a single enormous trace can still dominate geometry
 worker/WASM/PDF/font assets and icons. It supports relative manifests on Pages subpaths.
 `platform/installable-app.ts` owns registration/install/update controls. Development has no
 service worker. New builds wait for an explicit update; the app drains text and queued edits
-before activating and reloading. Remote URLs are never opportunistically cached. Notebook
+before activating and reloading. Temporary, memory-only sessions refuse update reloads;
+export those notebooks before reloading manually. Remote URLs are never opportunistically cached. Notebook
 and embedded blobs remain in OPFS/SQLite, independently of shell cache cleanup.
 
 Safari's Home Screen web app is the current fullscreen iPad host, with safe-area padding,

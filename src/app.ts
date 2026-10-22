@@ -68,6 +68,7 @@ export function startApp(
     active = false,
     writes = 0,
     ownsDatabase = true,
+    persistent = false,
     resetting = false,
     importing = false;
   let background: 'ready' | 'loading' | 'error' = 'ready',
@@ -523,6 +524,7 @@ export function startApp(
     return operations;
   }
   async function open(result: Initialized) {
+    persistent = result.mode === 'persistent';
     if (result.mode === 'blocked') {
       ownsDatabase = false;
       notice.hidden = false;
@@ -870,6 +872,10 @@ export function startApp(
   const installable = new InstallableApp(element('installable-app'), {
     canReload: () => !active && !importing && !resetting && ownsDatabase,
     async prepare() {
+      if (!persistent)
+        throw new Error(
+          'This session is temporary. Export its notebooks, then reload manually to update the app.',
+        );
       importing = true;
       refresh();
       try {

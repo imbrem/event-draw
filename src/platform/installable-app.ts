@@ -1,6 +1,5 @@
 interface InstallPrompt extends Event {
   prompt(): Promise<void>;
-  userChoice: Promise<{ outcome: string }>;
 }
 
 /** Browser installation/update lifecycle; no knowledge of notebook schema or tools. */

@@ -1366,6 +1366,12 @@ test('temporary storage keeps independent notebooks for the session', async ({ b
     await expect(page.locator('#counts')).toHaveText(/^0 visible · 0 raw strokes · \d+ events$/);
     await switchNotebook(page, 1);
     await expect(page.locator('#counts')).toHaveText(/^1 visible · 1 raw strokes · \d+ events$/);
+    await menu(page);
+    await page.locator('#update-app').evaluate(e => { (e as HTMLElement).hidden = false; });
+    await page.locator('#update-app').click();
+    await expect(page.locator('#notice')).toContainText('session is temporary');
+    await stroke(page, [[100, 250], [500, 250]]);
+    await expect(page.locator('#counts')).toContainText('2 visible');
   } finally { await context.close(); }
 });
 
