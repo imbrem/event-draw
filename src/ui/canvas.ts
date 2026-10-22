@@ -12,6 +12,7 @@ export interface CanvasOptions {
   onGesture(gesture: Gesture): void;
   onActive(active: boolean): void;
   onPan(view: ViewBox): void;
+  moveTargets(point: Point): number[];
 }
 /** Pointer lifecycle and repaint scheduling; persistence/UI policy live elsewhere. */
 export class NotebookCanvas {
@@ -53,7 +54,10 @@ export class NotebookCanvas {
     if (this.options.tool() === 'pan') {
       this.pan = { id: event.pointerId, x: event.clientX, y: event.clientY, view: { ...this.options.view() } };
     } else {
-      this.active = { id: event.pointerId, gesture: this.options.gesture() };
+      const gesture = this.options.gesture();
+      const targets = gesture.tool === 'lasso' ? this.options.moveTargets(this.position(event)) : [];
+      if (targets.length) { gesture.tool = 'move-selection'; gesture.shapeIds = targets; }
+      this.active = { id: event.pointerId, gesture };
       this.record(event);
     }
     this.canvas.setPointerCapture(event.pointerId);

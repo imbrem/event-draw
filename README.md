@@ -49,6 +49,11 @@ needed for this VFS. Runtime assets are served locally; no CDN is needed.
 - **Erase parts** cuts paths geometrically, including crossings between samples.
 - **Erase whole strokes** removes each visible shape touched by the eraser.
   A fragment left by a previous partial erase is its own visible shape.
+- **Lasso select** selects ink enclosed by or touching the loop. Drag inside
+  the selection's bounds to move the group, or use **Delete selected**.
+  Move/delete each undo as one operation. **Deselect** lets you start a new
+  loop inside the old selection. Selection is temporary and clears when
+  changing page/tool; its input and shape references remain in full history.
 - **Undo** reverses the last drawing edit on the active page. **Clear page**
   affects only that page. Page creation is not undoable yet. There is no redo.
 - Add A4, Letter, landscape or square pages, or an **infinite whiteboard**.
@@ -97,6 +102,12 @@ its raw capture, and several shape instances can share a raw ID. A partial
 eraser hides the touched shape and shows ranges of the same capture; fractional
 range endpoints interpolate the measured polyline. No synthetic fragment
 observations are inserted into the raw table.
+
+Lasso and move contacts are also real raw capture rows. `selection.lasso`
+references the selected shape states without changing their placement;
+`selection.move` writes new offsets for the same shape IDs, and
+`selection.delete` hides those instances. The current selection itself is
+UI state and is not restored by reload or undo.
 
 App events have relational foreign keys for resources and undo references;
 shape effects have foreign keys and complete state columns. Kind/version and

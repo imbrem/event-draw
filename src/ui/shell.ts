@@ -35,7 +35,8 @@ export function mountShell() {
         <div class="tools">
           <label>Tool <select id="tool" aria-label="Tool">
             <option value="pen">Pen</option><option value="erase-parts">Erase parts</option>
-            <option value="erase-strokes">Erase whole strokes</option><option value="pan">Pan board</option>
+            <option value="erase-strokes">Erase whole strokes</option><option value="lasso">Lasso select</option>
+            <option value="pan">Pan board</option>
           </select></label>
           <label id="color-control">Ink <input id="color" type="color" value="#203b42" aria-label="Ink color"></label>
           <label id="width-control">Width <input id="width" type="range" min="1" max="12" value="3" aria-label="Pen width"></label>
@@ -53,6 +54,12 @@ export function mountShell() {
           </details>
         </div>
       </section>
+      <div id="selection-controls" class="selection-controls" hidden>
+        <span id="selection-count">0 selected</span>
+        <button id="delete-selection" disabled>Delete selected</button>
+        <button id="deselect" disabled>Deselect</button>
+        <span>Loop around ink to select it. Drag inside the selection to move it.</span>
+      </div>
       <div id="board-controls" class="board-controls" hidden>
         <span>Drag with Pan to explore the board.</span>
         <button id="zoom-out" aria-label="Zoom out">−</button>

@@ -31,10 +31,12 @@ export interface Page {
   width: number | null; height: number | null;
 }
 export interface Style { color: string; lineWidth: number }
-export type Tool = 'pen' | 'erase-parts' | 'erase-strokes' | 'pan';
+export type Tool = 'pen' | 'erase-parts' | 'erase-strokes' | 'lasso' | 'pan';
 export interface Gesture {
   pageId: number;
-  tool: Exclude<Tool, 'pan'>;
+  tool: Exclude<Tool, 'pan'> | 'move-selection';
+  /** App operation targets; never serialized into raw capture JSON. */
+  shapeIds?: number[];
   style: Style;
   radius: number;
   cancelled: boolean;

@@ -59,6 +59,7 @@ select { font: inherit; color: inherit; background: #fffefa; border: 1px solid #
 .page-tools, .board-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 12px 0; font-size: 12px; }
 .toolbar .tools { gap: 12px; }
 .board-controls { color: #71817c; }
+.selection-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 12px 0; color: #637c7b; font-size: 12px; }
 .whiteboard { background-color: white; background-image: radial-gradient(#c7d3cb 1px, transparent 1px); background-size: 20px 20px; }
 #recovery-actions { display: flex; gap: 10px; margin-bottom: 15px; }
 .viewer-description { font-size: 13px; color: #71817c; line-height: 1.6; }

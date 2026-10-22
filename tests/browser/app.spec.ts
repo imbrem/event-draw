@@ -284,3 +284,47 @@ test('an unsupported on-disk schema can be exported and reset from the error scr
   await page.reload();
   await expect(page.locator('#counts')).toHaveText('1 visible · 1 raw strokes · 1 events');
 });
+
+test('lasso selects ink, dragging changes placement only, and deletion and movement undo separately', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.locator('#save-state')).toHaveText('Saved');
+  await stroke(page);
+  await stroke(page, [[100, 300], [500, 300]]);
+  const before = await exported(page);
+  const raw = before.prepare('SELECT * FROM stroke_events ORDER BY id').all();
+  const original = before.prepare('SELECT * FROM visible_shapes WHERE id = 1').get()!;
+  before.close();
+  await page.locator('#tool').selectOption('lasso');
+  await stroke(page, [[250, 120], [350, 120], [350, 180], [250, 180], [250, 120]]);
+  await expect(page.locator('#selection-count')).toHaveText('1 selected');
+  await stroke(page, [[300, 150], [350, 230]]);
+  await expect(page.locator('#selection-count')).toHaveText('1 selected');
+  const moved = await exported(page), compact = await exported(page, '#export-visible');
+  try {
+    expect(moved.prepare('SELECT * FROM stroke_events WHERE id <= 2 ORDER BY id').all()).toEqual(raw);
+    const current = moved.prepare('SELECT * FROM visible_shapes WHERE id = 1').get()!;
+    expect(current.raw_stroke_id).toBe(original.raw_stroke_id);
+    // WebKit rounds synthetic mouse coordinates to CSS pixels.
+    expect(Math.abs(Number(current.offset_x) - Number(original.offset_x) - 50)).toBeLessThan(1.1);
+    expect(Math.abs(Number(current.offset_y) - Number(original.offset_y) - 80)).toBeLessThan(1.1);
+    expect(moved.prepare('SELECT kind FROM app_events ORDER BY id').all().map((r) => r.kind))
+      .toEqual(['stroke.add', 'stroke.add', 'selection.lasso', 'selection.move']);
+    expect(moved.prepare('SELECT count(*) AS n FROM stroke_events').get()!.n).toBe(4);
+    expect(compact.prepare('SELECT count(*) AS n FROM stroke_events').get()!.n).toBe(2);
+    expect(compact.prepare('SELECT * FROM visible_shapes ORDER BY id').all())
+      .toEqual(moved.prepare('SELECT * FROM visible_shapes ORDER BY id').all());
+  } finally { moved.close(); compact.close(); }
+  await page.screenshot({ path: 'test-results/lasso-selection.png', fullPage: true });
+  await page.locator('#delete-selection').click();
+  await expect(page.locator('#counts')).toHaveText('1 visible · 4 raw strokes · 5 events');
+  await expect(page.locator('#selection-count')).toHaveText('0 selected');
+  await page.locator('#undo').click();
+  await expect(page.locator('#counts')).toContainText('2 visible');
+  await page.locator('#undo').click();
+  await expect(page.locator('#counts')).toHaveText('2 visible · 4 raw strokes · 7 events');
+  const restored = await exported(page);
+  try { expect(restored.prepare('SELECT * FROM visible_shapes WHERE id = 1').get()).toEqual(original); }
+  finally { restored.close(); }
+  await page.reload();
+  await expect(page.locator('#counts')).toHaveText('2 visible · 4 raw strokes · 7 events');
+});

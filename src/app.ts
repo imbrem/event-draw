@@ -1,6 +1,7 @@
 import { captureSession } from './capture.ts';
 import { DatabaseClient, type Initialized } from './database.ts';
 import { download } from './download.ts';
+import { lassoShapes, selectionBounds } from './geometry.ts';
 import { EMPTY_STATE, measuredSamples, type Gesture, type Page, type State, type Tool, type ViewBox } from './model.ts';
 import { NotebookCanvas } from './ui/canvas.ts';
 import { mountShell, element } from './ui/shell.ts';
@@ -15,6 +16,7 @@ export function startApp(): () => void {
   let mode: 'persistent' | 'temporary' | 'blocked' = 'temporary';
   let tab = 'notebook';
   let pending: Gesture[] = [], unsaved: Gesture[] = [];
+  let selected = new Set<number>();
   let operations: Promise<void> = Promise.resolve();
   const views = new Map<number, ViewBox>();
   const canvas = element<HTMLCanvasElement>('canvas');
@@ -37,11 +39,18 @@ export function startApp(): () => void {
     radius: Number(element<HTMLInputElement>('radius').value), cancelled: false, data: { deliveries: [] },
   });
   const notebook = new NotebookCanvas(canvas, {
-    canStart: () => ready && !failed && (tool.value === 'pen' || writes === 0),
+    canStart: () => ready && !failed && !resetting && (tool.value === 'pen' || writes === 0),
     touchEnabled: () => element<HTMLInputElement>('touch').checked,
     tool: () => tool.value as Tool, gesture, view,
     scene: () => ({ shapes: shapes(), pending: pending.filter((g) => g.pageId === pageId),
-      view: view(), tool: tool.value, radius: Number(element<HTMLInputElement>('radius').value) }),
+      view: view(), tool: tool.value, selected: [...selected],
+      radius: Number(element<HTMLInputElement>('radius').value) }),
+    moveTargets(point) {
+      const bounds = selectionBounds(shapes().filter((s) => selected.has(s.id)));
+      const pad = 8 * view().width / canvas.getBoundingClientRect().width;
+      return bounds && point.x >= bounds.x - pad && point.x <= bounds.x + bounds.width + pad &&
+        point.y >= bounds.y - pad && point.y <= bounds.y + bounds.height + pad ? [...selected] : [];
+    },
     onActive(value) { active = value; refresh(); },
     onPan(value) { views.set(pageId, value); refresh(); },
     onGesture(input) {
@@ -54,6 +63,9 @@ export function startApp(): () => void {
         lastReported: last.reported, status: input.cancelled ? 'cancelled' : 'complete',
       }, null, 2);
       edit(() => db.gesture(input, sessionId), () => {
+        if (!input.cancelled && input.tool === 'lasso') {
+          selected = new Set(lassoShapes(shapes(), measuredSamples(input.data)).map((s) => s.id));
+        }
         pending = pending.filter((item) => item !== input);
         unsaved = unsaved.filter((item) => item !== input);
       });
@@ -64,6 +76,8 @@ export function startApp(): () => void {
     notice.textContent = value instanceof Error ? value.message : String(value);
   }
   function refresh() {
+    const visibleIds = new Set(shapes().map((s) => s.id));
+    selected = new Set([...selected].filter((id) => visibleIds.has(id)));
     const busy = !ready || failed || active || writes > 0 || resetting;
     for (const id of ['page', 'page-size', 'add-page', 'tool', 'color', 'width', 'radius', 'touch',
       'zoom-in', 'zoom-out', 'home-view']) {
@@ -71,6 +85,11 @@ export function startApp(): () => void {
     }
     element<HTMLButtonElement>('undo').disabled = busy || !state.undoablePages.includes(pageId);
     element<HTMLButtonElement>('clear').disabled = busy || !shapes().length;
+    for (const id of ['delete-selection', 'deselect']) {
+      element<HTMLButtonElement>(id).disabled = busy || !selected.size;
+    }
+    element('selection-controls').hidden = tool.value !== 'lasso';
+    element('selection-count').textContent = selected.size + ' selected';
     element<HTMLButtonElement>('export-full').disabled = !ready || active || writes > 0;
     element<HTMLButtonElement>('export-visible').disabled = !ready || active || writes > 0 || failed;
     for (const id of ['reset-settings', 'reset-local', 'export-existing']) {
@@ -138,7 +157,7 @@ export function startApp(): () => void {
     resetting = true; refresh();
     try {
       await operations;
-      views.clear(); pageId = 1;
+      views.clear(); selected.clear(); pageId = 1;
       await open(await db.reset(session));
       setTab('notebook');
     } catch (value) { error(value); }
@@ -160,10 +179,12 @@ export function startApp(): () => void {
   document.querySelectorAll<HTMLButtonElement>('[data-tab]').forEach((button) => {
     button.onclick = () => setTab(button.dataset.tab!);
   });
-  pageSelect.onchange = () => { pageId = Number(pageSelect.value); refresh(); };
-  tool.onchange = refresh;
+  pageSelect.onchange = () => { selected.clear(); pageId = Number(pageSelect.value); refresh(); };
+  tool.onchange = () => { selected.clear(); refresh(); };
   element('undo').onclick = () => edit(() => db.undo(pageId));
   element('clear').onclick = () => edit(() => db.clear(pageId));
+  element('delete-selection').onclick = () => edit(() => db.deleteShapes(pageId, [...selected]), () => selected.clear());
+  element('deselect').onclick = () => { selected.clear(); refresh(); };
   element('add-page').onclick = () => {
     const sizes: Record<string, [number | null, number | null, string]> = {
       a4: [595, 842, 'A4'], letter: [612, 792, 'Letter'], landscape: [842, 595, 'Landscape'],
@@ -171,7 +192,7 @@ export function startApp(): () => void {
     };
     const [width, height, name] = sizes[element<HTMLSelectElement>('page-size').value];
     edit(() => db.addPage(name + ' ' + (state.pages.length + 1), width, height),
-      () => { pageId = state.pages.at(-1)!.id; });
+      () => { selected.clear(); pageId = state.pages.at(-1)!.id; });
   };
   async function exportDb(kind: 'full' | 'visible') {
     try {

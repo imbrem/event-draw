@@ -80,6 +80,7 @@ scope.onmessage = async ({ data: request }) => {
         value = journal.addPage(title, width, height); break;
       }
       case 'clear': value = journal.clear(request.payload); break;
+      case 'deleteShapes': value = journal.deleteShapes(request.payload.pageId, request.payload.shapeIds); break;
       case 'undo': value = journal.undo(request.payload); break;
       case 'browse':
         value = journal.browse(request.payload.table as ViewerTable, request.payload.offset) satisfies BrowseResult; break;

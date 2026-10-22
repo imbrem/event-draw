@@ -1,4 +1,4 @@
-import { measuredSamples, type InkData, type Point, type Range, type VisibleShape } from './model.ts';
+import { measuredSamples, type InkData, type Point, type Range, type ViewBox, type VisibleShape } from './model.ts';
 
 const EPS = 1e-8;
 export function interpolate(a: Point, b: Point, t: number): Point {
@@ -110,4 +110,48 @@ export function planErasure(shapes: VisibleShape[], path: Point[], radius: numbe
     }
   }
   return result;
+}
+
+function insidePolygon(p: Point, polygon: Point[]): boolean {
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const a = polygon[i], b = polygon[j];
+    if ((a.y > p.y) !== (b.y > p.y) && p.x < (b.x - a.x) * (p.y - a.y) / (b.y - a.y) + a.x) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+/** Select ink enclosed by or touching a closed lasso, including sparse crossings. */
+export function lassoShapes(shapes: VisibleShape[], polygon: Point[]): VisibleShape[] {
+  if (polygon.length < 3) return [];
+  // Reject a tap/straight line, while allowing self-crossing lassos (even-odd fill).
+  const first = polygon[0];
+  if (!polygon.some((p, i) => {
+    const q = polygon[(i + 1) % polygon.length];
+    return Math.abs((p.x - first.x) * (q.y - first.y) - (p.y - first.y) * (q.x - first.x)) > EPS;
+  })) return [];
+  const edges = polygon.map((p, i) => [p, polygon[(i + 1) % polygon.length]]);
+  return shapes.filter((shape) => {
+    const points = shapePath(shape);
+    if (points.some((p) => insidePolygon(p, polygon))) return true;
+    for (let i = 0; i < points.length; i++) {
+      const p = points[i], q = points[Math.min(i + 1, points.length - 1)];
+      if (edges.some(([a, b]) => capsuleIntervals(p, q, a, b, shape.line_width / 2).length)) return true;
+    }
+    return false;
+  });
+}
+export function selectionBounds(shapes: VisibleShape[]): ViewBox | null {
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const shape of shapes) for (const p of shapePath(shape)) {
+    const r = shape.line_width / 2;
+    minX = Math.min(minX, p.x - r); maxX = Math.max(maxX, p.x + r);
+    minY = Math.min(minY, p.y - r); maxY = Math.max(maxY, p.y + r);
+  }
+  return minX === Infinity ? null : { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+}
+export function gestureDelta(data: InkData): Point {
+  const points = measuredSamples(data), first = points[0], last = points.at(-1);
+  return first && last ? { x: last.x - first.x, y: last.y - first.y } : { x: 0, y: 0 };
 }

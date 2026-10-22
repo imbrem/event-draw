@@ -122,3 +122,57 @@ test('database viewer is read only and restricts table names and pagination', ()
     assert.equal(d.journal.browse('pages').total, 1);
   } finally { d.close(); }
 });
+
+test('lasso records references, move preserves raw identity, and delete/undo are page-local', () => {
+  const d = database();
+  try {
+    d.journal.addPage('Other', 400, 400);
+    d.journal.gesture(gesture([[0, 50], [100, 50]]), d.sessionId);
+    d.journal.gesture(gesture([[10, 80]]), d.sessionId);
+    d.journal.gesture(gesture([[0, 50], [100, 50]], 'pen', 2), d.sessionId);
+    const original = d.journal.visible(1);
+    const raw = d.db.all('SELECT * FROM stroke_events WHERE id = 1')[0];
+    const lasso = gesture([[40, 40], [60, 40], [60, 60], [40, 60]], 'lasso');
+    d.journal.gesture(lasso, d.sessionId);
+    assert.deepEqual(d.journal.related(5).map((r) => r.shape_id), [1]);
+    assert.deepEqual(d.journal.visible(1), original);
+    const move = gesture([[50, 50], [70, 80]], 'move-selection');
+    move.shapeIds = [1, 3, 999]; // foreign page / stale IDs cannot be edited
+    d.journal.gesture(move, d.sessionId);
+    const moved = d.journal.visible(1)[0];
+    assert.equal(moved.id, original[0].id);
+    assert.equal(moved.raw_stroke_id, original[0].raw_stroke_id);
+    assert.equal(moved.offset_x, original[0].offset_x + 20);
+    assert.equal(moved.offset_y, original[0].offset_y + 30);
+    assert.deepEqual(d.db.all('SELECT * FROM stroke_events WHERE id = 1')[0], raw);
+    assert.equal(d.journal.visible(2)[0].offset_x, 0);
+    d.journal.deleteShapes(1, [1, 3]);
+    assert.deepEqual(d.journal.visible(1).map((s) => s.id), [2]);
+    assert.equal(d.journal.visible(2).length, 1);
+    d.journal.undo(1);
+    assert.deepEqual(d.journal.visible(1)[0], moved);
+    d.journal.undo(1);
+    assert.deepEqual(d.journal.visible(1), original);
+    assert.deepEqual(d.db.all('PRAGMA foreign_key_check'), []);
+  } finally { d.close(); }
+});
+
+test('compact moved fragments retain source bytes and discard selection/drag history', () => {
+  const source = database(), target = database();
+  try {
+    source.journal.gesture(gesture([[0, 50], [100, 50]]), source.sessionId);
+    source.journal.gesture(gesture([[50, 0], [50, 100]], 'erase-parts'), source.sessionId);
+    const ids = source.journal.visible().map((s) => s.id);
+    const move = gesture([[10, 50], [-90, -50]], 'move-selection');
+    move.shapeIds = ids;
+    source.journal.gesture(move, source.sessionId);
+    target.db.exec('DELETE FROM capture_sessions');
+    source.journal.snapshotInto(target.db);
+    assert.deepEqual(target.journal.visible(), source.journal.visible());
+    assert.equal(target.journal.state().rawCount, 1);
+    assert.equal(target.journal.state().eventCount, 1);
+    assert.deepEqual(target.db.all('SELECT * FROM stroke_events'), source.db.all('SELECT * FROM stroke_events WHERE id = 1'));
+    assert.equal(target.journal.visible()[0].offset_x, -100);
+    assert.equal(target.journal.visible()[1].offset_x, -100);
+  } finally { source.close(); target.close(); }
+});

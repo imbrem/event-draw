@@ -2,7 +2,7 @@ import {
   localize, measuredSamples, type CaptureSession, type Gesture, type Page,
   type State, type Style, type VisibleShape,
 } from './model.ts';
-import { planErasure } from './geometry.ts';
+import { gestureDelta, lassoShapes, planErasure } from './geometry.ts';
 import {
   insertRow, scalar, transaction, VIEWER_TABLES,
   type BrowseResult, type Row, type SqlDatabase, type ViewerTable,
@@ -87,6 +87,21 @@ export class Journal {
           id: shapeId, page_id: input.pageId, style_id: styleId,
           offset_x: origin.x, offset_y: origin.y, paint_order: shapeId,
         }, true);
+      } else if (input.tool === 'lasso') {
+        const selected = lassoShapes(this.visible(input.pageId), measuredSamples(input.data));
+        const eventId = this.event('selection.lasso', { pageId: input.pageId, rawId, tool: input.tool });
+        for (const shape of selected) this.effect(eventId, shape, true);
+      } else if (input.tool === 'move-selection') {
+        const ids = new Set(input.shapeIds);
+        const selected = this.visible(input.pageId).filter((shape) => ids.has(shape.id));
+        const delta = gestureDelta(input.data);
+        const changed = selected.length > 0 && (delta.x !== 0 || delta.y !== 0);
+        const eventId = this.event('selection.move', {
+          pageId: input.pageId, rawId, tool: input.tool, undoable: changed,
+          data: { deltaX: delta.x, deltaY: delta.y },
+        });
+        for (const shape of selected) this.effect(eventId, { ...shape,
+          offset_x: shape.offset_x + delta.x, offset_y: shape.offset_y + delta.y }, true);
       } else {
         const erasures = planErasure(this.visible(input.pageId),
           measuredSamples(input.data), input.radius, input.tool === 'erase-strokes');
@@ -111,6 +126,17 @@ export class Journal {
       if (shapes.length) {
         const eventId = this.event('page.clear', { pageId, undoable: true });
         for (const shape of shapes) this.effect(eventId, shape, false);
+      }
+      return this.state();
+    });
+  }
+  deleteShapes(pageId: number, shapeIds: number[]): State {
+    return transaction(this.db, () => {
+      const ids = new Set(shapeIds);
+      const selected = this.visible(pageId).filter((shape) => ids.has(shape.id));
+      if (selected.length) {
+        const eventId = this.event('selection.delete', { pageId, undoable: true });
+        for (const shape of selected) this.effect(eventId, shape, false);
       }
       return this.state();
     });
