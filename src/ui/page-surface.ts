@@ -81,17 +81,17 @@ export class PageSurface {
   }
   scale(factor: number, anchor?: { x: number; y: number }) {
     const before = this.paper.getBoundingClientRect(),
-      left = this.viewport.scrollLeft,
-      top = this.viewport.scrollTop,
-      ratioX = anchor ? (anchor.x - before.left) / before.width : 0.5,
-      ratioY = anchor ? (anchor.y - before.top) / before.height : 0.5;
+      viewport = this.viewport.getBoundingClientRect();
+    const point = anchor ?? { x: viewport.left + viewport.width / 2, y: viewport.top + viewport.height / 2 };
+    const ratioX = (point.x - before.left) / before.width,
+      ratioY = (point.y - before.top) / before.height;
     this.zoom = Math.min(8, Math.max(0.25, this.zoom * factor));
     this.layout();
     const after = this.paper.getBoundingClientRect();
-    this.viewport.scrollLeft =
-      left + (after.left + ratioX * after.width) - (before.left + ratioX * before.width);
-    this.viewport.scrollTop =
-      top + (after.top + ratioY * after.height) - (before.top + ratioY * before.height);
+    // Layout may already adjust/clamp scroll. Correct the anchor from that actual position.
+    this.viewport.scrollLeft += after.left + ratioX * after.width - point.x;
+    this.viewport.scrollTop += after.top + ratioY * after.height - point.y;
+    this.scheduleWindow();
   }
   pan(dx: number, dy: number) {
     this.viewport.scrollLeft -= dx;
