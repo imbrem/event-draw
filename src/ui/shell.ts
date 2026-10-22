@@ -20,10 +20,18 @@ export function mountShell() {
           <button data-tab="events" aria-pressed="false">Events</button>
           <button data-tab="raw" aria-pressed="false">Raw strokes</button>
         </nav>
+        <section aria-label="Notebook files"><h2>Notebook file</h2>
+          <label class="file-button">Open notebook <input id="notebook-file" type="file" accept=".sqlite3,.sqlite,.db,application/vnd.sqlite3"></label>
+          <button id="new-notebook">New notebook</button><button id="restore-backup">Restore recovery copy</button>
+          <p id="notebook-name">Local notebook</p><p>Saved locally as you work. Save SQLite to keep a portable notebook. Opening or creating a notebook first keeps a recovery copy.</p>
+        </section>
         <section aria-label="Documents"><h2>Document</h2>
           <label>Name <input id="document-name" aria-label="Document name" placeholder="Blank notes"></label>
           <button id="rename-document">Rename</button><button id="new-document">New blank document</button>
           <label class="file-button">Open PDF <input id="pdf-file" type="file" accept="application/pdf,.pdf"></label>
+          <label><input id="insert-pdf" type="checkbox"> Insert PDF after current page</label>
+          <label class="file-button">Add image / SVG <input id="image-file" type="file" accept="image/*,.svg"></label>
+          <label><input id="image-as-object" type="checkbox"> Place image / SVG on current page</label>
           <form id="pdf-url-form"><label>PDF URL <input id="pdf-url" type="url" required placeholder="https://…"></label>
             <button id="import-url" type="submit">Import URL</button></form>
           <p id="document-hash" class="content-id"></p>
@@ -37,8 +45,10 @@ export function mountShell() {
         </section>
         <section><h2>Export & local state</h2>
           <details class="export-menu"><summary>Export SQLite ↓</summary><div class="export-options">
-            <button id="export-full">Full history</button><button id="export-visible">Visible state only</button>
-            <p>Includes PDFs and every document. Visible state drops earlier edits.</p>
+            <button id="export-full">Save notebook · full history</button><button id="export-visible">Visible state + provenance</button><button id="export-drawn">Just what’s drawn</button>
+            <label><input id="include-blobs" type="checkbox" checked> Embed source files</label>
+            <button id="export-pdf">Annotated PDF · current document</button>
+            <p>SQLite includes all documents. Drawn state excludes linked notes and diagnostic detections. PDF export flattens backgrounds, ink and page objects.</p>
           </div></details>
           <p id="storage" role="status">Opening notebook…</p>
           <p id="counts"></p><p id="page-heading"></p>
@@ -56,11 +66,12 @@ export function mountShell() {
   <main>
     <section id="notebook-panel">
       <div class="notebook-workspace"><div id="page-viewport" class="page-viewport"><div class="page-frame">
-        <div id="paper" class="paper"><canvas id="pdf-canvas" aria-label="PDF page background" hidden></canvas><canvas id="canvas" aria-label="Drawing page"></canvas><div id="page-objects" class="page-objects"></div></div>
+        <div id="paper" class="paper"><canvas id="pdf-canvas" aria-label="PDF page background" hidden></canvas><canvas id="canvas" aria-label="Drawing page"></canvas><div id="page-objects" class="page-objects"></div><div id="pdf-text" class="pdf-text" hidden></div></div>
       </div></div><aside id="text-panel" aria-label="Page text notes" hidden></aside></div>
       <div class="ink-dock" aria-label="Drawing tools">
         <div id="tool-picker" class="tool-picker" role="group" aria-label="Tools"></div>
         <button id="undo" disabled>Undo</button>
+        <button id="redo" disabled>Redo</button><button id="browse-pages">Pages / Search</button>
         <button id="toggle-text" aria-expanded="false" aria-controls="text-panel">Text</button>
         <details id="ink-settings"><summary>Ink & actions</summary><div class="ink-settings-panel">
           <label id="color-control">Ink <input id="color" type="color" value="#203b42" aria-label="Ink color"></label>
@@ -70,6 +81,7 @@ export function mountShell() {
           <label id="eraser-control" hidden>Size <input id="radius" type="range" min="3" max="50" value="12" aria-label="Eraser radius"></label>
           <label><input id="touch" type="checkbox" checked> Finger drawing</label>
           <label><input id="show-boxes" type="checkbox" checked> Show detected boxes</label>
+          <label><input id="select-pdf-text" type="checkbox"> Select PDF text</label>
           <button id="clear">Clear ink</button>
         </div></details>
         <div class="zoom-controls"><button id="zoom-out" aria-label="Zoom out">−</button><button id="zoom-in" aria-label="Zoom in">+</button><button id="home-view">Fit page</button></div>
@@ -77,10 +89,13 @@ export function mountShell() {
       <div id="selection-controls" class="selection-controls" hidden>
         <span id="selection-count">0 selected</span><button id="delete-selection">Delete selected</button><button id="deselect">Deselect</button>
         <button id="apply-processing">Apply ink policies</button>
+        <button id="copy-selection">Copy</button><button id="paste-selection">Paste</button><button id="duplicate-selection">Duplicate</button>
+        <button id="shrink-selection">Smaller</button><button id="grow-selection">Larger</button><button id="rotate-selection">Rotate 15°</button>
         <span>Loop to select. Drag inside the selection to move.</span>
       </div>
       <div id="board-controls" hidden><span id="view-position"></span></div>
     </section>
     <section id="viewer-panel" hidden></section>
+    <dialog id="page-browser" aria-label="Pages and search"></dialog>
   </main>`;
 }

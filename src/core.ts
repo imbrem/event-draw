@@ -10,3 +10,8 @@ export * from './geometry.ts';
 export * from './replay.ts';
 export { Journal } from './journal.ts';
 export type { SqlDatabase, SqlValue, Row } from './storage/sql.ts';
+
+export { replaceNotebook, validateNotebook } from './storage/notebooks.ts';
+export { InkIndex } from './spatial.ts';
+export { LiveInk } from './live-ink.ts';
+export * from './content.ts';

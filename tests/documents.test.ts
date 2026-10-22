@@ -20,9 +20,12 @@ test('document names and content IDs are separate; import deduplicates without l
     assert.throws(() => d.journal.readPdf('missing'), /not found/);
     assert.throws(() => d.journal.renameDocument(1, 'Renamed'), /already in use/);
     assert.throws(() => d.journal.renameDocument(1, 'bad/name'), /cannot contain/);
-    assert.throws(() => d.journal.addPage(document.id, pages[0].id, 100, 100), /fixed/);
-    assert.throws(() => d.journal.changePage(pages[0].id, 'delete'), /fixed/);
-    assert.deepEqual(d.journal.state(), before);
+    d.journal.addPage(document.id, pages[0].id, 100, 100);
+    d.journal.undo(pages[0].id);
+    assert.deepEqual(d.journal.state().pages.filter((p)=>p.document_id===document.id),pages);
+    d.journal.changePage(pages[0].id, 'delete');
+    d.journal.undo(pages[1].id);
+    assert.deepEqual(d.journal.visible(pages[0].id),before.shapes);
     assert.deepEqual(Object.keys(d.journal.browse('assets').rows[0]), ['hash', 'media_type', 'byte_length']);
   } finally { d.close(); }
 });

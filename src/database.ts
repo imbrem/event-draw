@@ -1,14 +1,31 @@
-import type { CaptureSession, Gesture, PdfImport, State, ObjectInput } from './model.ts';
+import type {
+  CaptureSession,
+  Gesture,
+  PdfImport,
+  State,
+  ObjectInput,
+  AssetImport,
+  SelectionTransform,
+  ClipboardInk,
+  PageSource,
+} from './model.ts';
 import type { BrowseResult, Row, ViewerTable } from './storage/sql.ts';
 import type { DatabaseDiagnostics } from './storage/diagnostics.ts';
+import { StateDecoder, type StatePatch } from './state-transport.ts';
 import type { InkPolicy } from './ink.ts';
 
-export type Initialized = {
-  mode: 'persistent' | 'temporary'; state: State; sessionId: number; storageError: string | null;
-} | { mode: 'blocked' };
+export type Initialized =
+  | {
+      mode: 'persistent' | 'temporary';
+      state: State;
+      sessionId: number;
+      storageError: string | null;
+    }
+  | { mode: 'blocked' };
 
 export class DatabaseClient {
   private worker = new Worker(new URL('./db.worker.ts', import.meta.url), { type: 'module' });
+  private decoder = new StateDecoder();
   private nextId = 0;
   private pending = new Map<number, { resolve(value: unknown): void; reject(error: Error): void }>();
   private failure: Error | null = null;
@@ -18,7 +35,13 @@ export class DatabaseClient {
       if (!pending) return;
       this.pending.delete(data.id);
       if (data.error) pending.reject(new Error(data.error));
-      else pending.resolve(data.value);
+      else {
+        let value = data.value;
+        if (value?.patch) value = this.decoder.decode(value as StatePatch);
+        else if (value?.state?.patch)
+          value = { ...value, state: this.decoder.decode(value.state as StatePatch) };
+        pending.resolve(value);
+      }
     };
     this.worker.onerror = (event) => this.fail(new Error(event.message || 'Database worker failed'));
   }
@@ -39,27 +62,91 @@ export class DatabaseClient {
       this.worker.postMessage({ id, method, payload });
     });
   }
-  init(session: CaptureSession) { return this.call<Initialized>('init', session); }
-  reset(session: CaptureSession) { return this.call<Initialized>('reset', session); }
-  gesture(gesture: Gesture, sessionId: number) { return this.call<State>('gesture', { gesture, sessionId }); }
+  openNotebook(bytes: Uint8Array, session: CaptureSession) {
+    return this.call<Initialized>('openNotebook', { bytes, session });
+  }
+  setPageSource(pageId: number, source: PageSource) {
+    return this.call<State>('setPageSource', { pageId, source });
+  }
+  insertPdf(input: PdfImport, documentId: number, afterPageId: number) {
+    return this.call<State>('insertPdf', { input, documentId, afterPageId });
+  }
+  importAsset(input: AssetImport) {
+    return this.call<State>('importAsset', input);
+  }
+  transformShapes(pageId: number, ids: number[], change: SelectionTransform) {
+    return this.call<State>('transformShapes', { pageId, ids, change });
+  }
+  copyShapes(pageId: number, ids: number[]) {
+    return this.call<ClipboardInk[]>('copyShapes', { pageId, ids });
+  }
+  pasteShapes(pageId: number, items: ClipboardInk[]) {
+    return this.call<State>('pasteShapes', { pageId, items });
+  }
+  redo(pageId: number) {
+    return this.call<State>('redo', pageId);
+  }
+  init(session: CaptureSession) {
+    return this.call<Initialized>('init', session);
+  }
+  reset(session: CaptureSession) {
+    return this.call<Initialized>('reset', session);
+  }
+  gesture(gesture: Gesture, sessionId: number) {
+    return this.call<State>('gesture', { gesture, sessionId });
+  }
   addPage(documentId: number, afterPageId: number, width: number | null, height: number | null) {
     return this.call<State>('addPage', { documentId, afterPageId, width, height });
   }
-  createDocument(name: string) { return this.call<State>('createDocument', name); }
-  renameDocument(id: number, name: string) { return this.call<State>('renameDocument', { id, name }); }
-  importPdf(input: PdfImport) { return this.call<State>('importPdf', input); }
-  read(hash: string) { return this.call<Uint8Array>('readPdf', hash); }
-  changePage(pageId: number, action: 'earlier' | 'later' | 'delete') { return this.call<State>('changePage', { pageId, action }); }
-  undo(pageId: number) { return this.call<State>('undo', pageId); }
-  clear(pageId: number) { return this.call<State>('clear', pageId); }
-  deleteShapes(pageId: number, shapeIds: number[]) { return this.call<State>('deleteShapes', { pageId, shapeIds }); }
-  reprocess(pageId: number, shapeIds: number[], policy: InkPolicy) { return this.call<State>('reprocess', { pageId, shapeIds, policy }); }
-  outputs(rawId: number) { return this.call<Row[]>('outputs', rawId); }
-  setObject(input: ObjectInput) { return this.call<State>('setObject', input); }
-  deleteObject(pageId: number, id: number) { return this.call<State>('deleteObject', { pageId, id }); }
-  browse(table: ViewerTable, offset = 0) { return this.call<BrowseResult>('browse', { table, offset }); }
-  related(eventId: number) { return this.call<Row[]>('related', eventId); }
-  relatedContent(eventId: number) { return this.call<{ objects: Row[]; boxes: Row[] }>('relatedContent', eventId); }
-  diagnostics() { return this.call<DatabaseDiagnostics>('diagnostics'); }
-  export(mode: 'full' | 'visible') { return this.call<Uint8Array<ArrayBuffer>>('export', mode); }
+  createDocument(name: string) {
+    return this.call<State>('createDocument', name);
+  }
+  renameDocument(id: number, name: string) {
+    return this.call<State>('renameDocument', { id, name });
+  }
+  importPdf(input: PdfImport) {
+    return this.call<State>('importPdf', input);
+  }
+  read(hash: string) {
+    return this.call<Uint8Array>('readPdf', hash);
+  }
+  changePage(pageId: number, action: 'earlier' | 'later' | 'delete') {
+    return this.call<State>('changePage', { pageId, action });
+  }
+  undo(pageId: number) {
+    return this.call<State>('undo', pageId);
+  }
+  clear(pageId: number) {
+    return this.call<State>('clear', pageId);
+  }
+  deleteShapes(pageId: number, shapeIds: number[]) {
+    return this.call<State>('deleteShapes', { pageId, shapeIds });
+  }
+  reprocess(pageId: number, shapeIds: number[], policy: InkPolicy) {
+    return this.call<State>('reprocess', { pageId, shapeIds, policy });
+  }
+  outputs(rawId: number) {
+    return this.call<Row[]>('outputs', rawId);
+  }
+  setObject(input: ObjectInput) {
+    return this.call<State>('setObject', input);
+  }
+  deleteObject(pageId: number, id: number) {
+    return this.call<State>('deleteObject', { pageId, id });
+  }
+  browse(table: ViewerTable, offset = 0) {
+    return this.call<BrowseResult>('browse', { table, offset });
+  }
+  related(eventId: number) {
+    return this.call<Row[]>('related', eventId);
+  }
+  relatedContent(eventId: number) {
+    return this.call<{ objects: Row[]; boxes: Row[] }>('relatedContent', eventId);
+  }
+  diagnostics() {
+    return this.call<DatabaseDiagnostics>('diagnostics');
+  }
+  export(mode: 'full' | 'visible' | 'drawn', includeBlobs = true) {
+    return this.call<Uint8Array<ArrayBuffer>>('export', includeBlobs ? mode : { mode, includeBlobs });
+  }
 }

@@ -1,21 +1,35 @@
 import type { Algorithm, InkPolicy } from './ink.ts';
 /** Only sensor observations and coordinate transforms belong in raw stroke JSON. */
-export interface Point { x: number; y: number }
+export interface Point {
+  x: number;
+  y: number;
+}
 export interface Sample extends Point {
   timeStamp: number;
   pointerId: number;
   pointerType: string;
   isPrimary: boolean;
-  clientX: number; clientY: number; pageX: number; pageY: number;
-  screenX: number; screenY: number;
-  button: number; buttons: number;
-  pressure: number | null; tangentialPressure: number | null;
+  clientX: number;
+  clientY: number;
+  pageX: number;
+  pageY: number;
+  screenX: number;
+  screenY: number;
+  button: number;
+  buttons: number;
+  pressure: number | null;
+  tangentialPressure: number | null;
   /** Sensor contact dimensions, NOT painted line width. */
-  width: number | null; height: number | null;
-  tiltX: number | null; tiltY: number | null; twist: number | null;
-  altitudeAngle: number | null; azimuthAngle: number | null;
+  width: number | null;
+  height: number | null;
+  tiltX: number | null;
+  tiltY: number | null;
+  twist: number | null;
+  altitudeAngle: number | null;
+  azimuthAngle: number | null;
   persistentDeviceId: number | null;
-  movementX: number | null; movementY: number | null;
+  movementX: number | null;
+  movementY: number | null;
 }
 export interface Delivery {
   type: string;
@@ -25,26 +39,112 @@ export interface Delivery {
   coalesced: Sample[];
   predicted: Sample[];
 }
-export interface InkData { deliveries: Delivery[] }
-export interface ViewBox extends Point { width: number; height: number }
+export interface InkData {
+  deliveries: Delivery[];
+}
+export interface ViewBox extends Point {
+  width: number;
+  height: number;
+}
 export type ContentId = string;
-export interface Document { id: number; name: string; pdf_hash: ContentId | null }
-export interface PdfPageSize { width: number; height: number }
-export interface PdfImport { hash: ContentId; name: string; bytes: Uint8Array; pages: PdfPageSize[] }
-export type Page = { id: number; document_id: number; page_number: number; source_page: number | null; deleted: number } & (
-  { kind: 'page'; width: number; height: number } |
-  { kind: 'whiteboard'; width: null; height: null }
-);
-export interface Style { color: string; lineWidth: number; opacity?: number; blendMode?: 'source-over' | 'multiply' }
-export interface ObjectPlacement { rendered: boolean; x: number; y: number; width: number; height: number; rotation: number; label: string }
-export interface ObjectInput extends ObjectPlacement { pageId: number; id?: number; format: string; data: unknown; sourceShapeIds?: number[] }
+export interface Document {
+  id: number;
+  name: string;
+  pdf_hash: ContentId | null;
+}
+export interface PdfPageSize {
+  width: number;
+  height: number;
+}
+export interface PdfImport {
+  hash: ContentId;
+  name: string;
+  bytes: Uint8Array;
+  pages: PdfPageSize[];
+}
+export interface PageSource {
+  source_kind: string;
+  source_hash: ContentId | null;
+  source_page: number | null;
+  source_json: string;
+}
+export type Page = { id: number; document_id: number; page_number: number; deleted: number } & PageSource &
+  ({ kind: 'page'; width: number; height: number } | { kind: 'whiteboard'; width: null; height: null });
+export interface AssetImport {
+  hash: ContentId;
+  name: string;
+  bytes: Uint8Array;
+  mediaType: string;
+  width: number;
+  height: number;
+  documentId: number;
+  afterPageId: number;
+  asObject?: boolean;
+}
+export interface SelectionTransform {
+  dx?: number;
+  dy?: number;
+  scale?: number;
+  rotation?: number;
+  center?: Point;
+}
+export interface ClipboardInk {
+  shape: VisibleShape;
+  data: InkData;
+  policy: InkPolicy;
+  session: Record<string, string | number | null> | null;
+}
+export interface Style {
+  color: string;
+  lineWidth: number;
+  opacity?: number;
+  blendMode?: 'source-over' | 'multiply';
+}
+export interface ObjectPlacement {
+  rendered: boolean;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  rotation: number;
+  label: string;
+}
+export interface ObjectInput extends ObjectPlacement {
+  pageId: number;
+  id?: number;
+  format: string;
+  data: unknown;
+  sourceShapeIds?: number[];
+}
 export interface PageObject {
-  id: number; page_id: number; content_id: number; format: string; data_version: number; data_json: string;
-  rendered: number; x: number; y: number; width: number; height: number; rotation: number; label: string; paint_order: number;
+  id: number;
+  page_id: number;
+  content_id: number;
+  format: string;
+  data_version: number;
+  data_json: string;
+  rendered: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  rotation: number;
+  label: string;
+  paint_order: number;
 }
 export interface DetectedBox {
-  id: number; page_id: number; policy_id: number; run_id: number; center_x: number; center_y: number;
-  width: number; height: number; rotation: number; confidence: number; source_key: string; shape_ids: string;
+  id: number;
+  page_id: number;
+  policy_id: number;
+  run_id: number;
+  center_x: number;
+  center_y: number;
+  width: number;
+  height: number;
+  rotation: number;
+  confidence: number;
+  source_key: string;
+  shape_ids: string;
 }
 export type Tool = 'pen' | 'highlighter' | 'restyle' | 'erase-parts' | 'erase-strokes' | 'lasso' | 'pan';
 export interface Gesture {
@@ -63,18 +163,30 @@ export interface VisibleShape {
   id: number;
   raw_stroke_id: number;
   output_id: number;
-  output_version: number; output_json: string;
-  start_index: number; end_index: number;
-  page_id: number; style_id: number;
-  offset_x: number; offset_y: number;
+  output_version: number;
+  output_json: string;
+  start_index: number;
+  end_index: number;
+  page_id: number;
+  style_id: number;
+  offset_x: number;
+  offset_y: number;
+  scale: number;
+  rotation: number;
   paint_order: number;
-  color: string; line_width: number;
-  opacity: number; blend_mode: 'source-over' | 'multiply';
-  data_version: number; data_json: string;
+  color: string;
+  line_width: number;
+  opacity: number;
+  blend_mode: 'source-over' | 'multiply';
+  data_version: number;
+  data_json: string;
 }
 export interface CaptureSession {
-  startedAt: string; source: string; timeOriginMs: number;
-  userAgent: string; devicePixelRatio: number;
+  startedAt: string;
+  source: string;
+  timeOriginMs: number;
+  userAgent: string;
+  devicePixelRatio: number;
   capabilities: Record<string, unknown>;
 }
 export interface State {
@@ -86,9 +198,18 @@ export interface State {
   rawCount: number;
   eventCount: number;
   undoablePages: number[];
+  redoablePages: number[];
 }
 export const EMPTY_STATE: State = {
-  documents: [], pages: [], shapes: [], objects: [], boxes: [], rawCount: 0, eventCount: 0, undoablePages: [],
+  documents: [],
+  pages: [],
+  shapes: [],
+  objects: [],
+  boxes: [],
+  rawCount: 0,
+  eventCount: 0,
+  undoablePages: [],
+  redoablePages: [],
 };
 export type Range = [number, number];
 
@@ -98,8 +219,7 @@ export function measuredDeliveries(data: InkData): Delivery[] {
   return data.deliveries.filter((d) => !raw || d.type !== 'pointermove');
 }
 export function measuredSamples(data: InkData): Sample[] {
-  return measuredDeliveries(data)
-    .flatMap((d) => d.coalesced.length ? d.coalesced : [d.reported]);
+  return measuredDeliveries(data).flatMap((d) => (d.coalesced.length ? d.coalesced : [d.reported]));
 }
 
 /** Preserve original browser measurements while making render geometry local. */
@@ -112,8 +232,10 @@ export function localize(data: InkData): { data: InkData; origin: Point } {
     data: {
       deliveries: data.deliveries.map((d) => ({
         ...d,
-        clientToPage: d.clientToPage.map((n, i) => i === 4 ? n - origin.x : i === 5 ? n - origin.y : n),
-        reported: sample(d.reported), coalesced: d.coalesced.map(sample), predicted: d.predicted.map(sample),
+        clientToPage: d.clientToPage.map((n, i) => (i === 4 ? n - origin.x : i === 5 ? n - origin.y : n)),
+        reported: sample(d.reported),
+        coalesced: d.coalesced.map(sample),
+        predicted: d.predicted.map(sample),
       })),
     },
   };

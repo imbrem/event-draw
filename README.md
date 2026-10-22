@@ -1,7 +1,7 @@
 # Event Draw
 
 A small browser notebook with raw pointer capture, a SQLite edit journal,
-PDF annotation, positioned text/math, pluggable trace processing and box detection,
+mixed PDF/image/SVG annotation, positioned text/math, pluggable trace processing and box detection,
 multiple documents/pages, vector erasers, and an inspectable event database. No account,
 server, native wrapper, or covalence dependency yet.
 
@@ -15,13 +15,26 @@ pnpm dev
 ```
 
 Open http://localhost:5173. Draw with a mouse, pen, or finger. Turn off
-**Finger drawing** when using a pen; this is an input filter, not full palm
-rejection. On a tablet, use a trusted HTTPS origin for persistent storage.
+**Finger drawing** to use one finger for panning. Two fingers pan/pinch; pen contact suppresses
+touch, with a short guard after pen-up. This is heuristic palm filtering, not native digitizer rejection. On a tablet, use a trusted HTTPS origin for persistent storage.
 Plain LAN HTTP cannot provide browser filesystem storage; where supported,
 the app uses an explicitly labelled temporary database. Export before closing.
 HTTPS hosting/tunnelling is not configured here.
 
-The notebook belongs to this browser profile and origin (including port).
+Each exported SQLite file is a notebook. The app autosaves one working copy in this browser
+profile and origin (including port). **Menu → Open notebook**, **New notebook**, and
+**Save notebook · full history** open/create/download portable files. Opening a file replaces
+the working copy; later edits do not automatically overwrite that original download. Notebook
+imports require the current schema, validate structure/integrity/geometry/content hashes, and
+replace saved state transactionally. A failed import preserves the working notebook.
+
+Before opening/creating a notebook, the app retains a recovery copy. It also keeps up to three
+idle snapshots, checked every minute; **Restore recovery copy** opens the latest. Recovery
+uses IndexedDB separately from the OPFS working copy; if recovery storage is unavailable when
+replacing a notebook, the previous notebook is downloaded instead. Browser-local copies can
+all be lost together; downloaded SQLite files are the portable backup.
+
+The working notebook belongs to this browser profile and origin.
 One tab owns it at a time; another tab is blocked with instructions to close
 the owner and reload. Browser storage can be evicted; export files to keep them.
 
@@ -51,7 +64,9 @@ The page uses the available window. Choose a document in the top bar and use
 previous/next, or enter a page number. **Fit page** restores the whole-page view;
 zooming a finite page makes it scrollable. The current document/page is a
 disposable local preference, restored after reload. Navigation is a separate
-component so a scrolling layout or page picker can replace it later.
+component independent of the picker/reader. **Pages / Search** has lazy page thumbnails,
+a continuous scroll reader (choose a page to edit), and search across text objects, linked
+notes and available PDF text in this notebook. Handwriting is not searched yet.
 
 **Menu** contains document/PDF management, blank-page controls, database viewers,
 exports and storage diagnostics. **Ink & actions** contains style, eraser size,
@@ -76,15 +91,19 @@ disabled during contact and while an edit is being saved.
   A fragment left by a previous partial erase is its own visible shape.
 - **Lasso select** selects ink enclosed by or touching the loop. Drag inside
   the selection's bounds to move the group, or use **Delete selected**.
-  Move/delete each undo as one operation. **Deselect** lets you start a new
+  Move/delete each undo as one operation. Copy/paste/duplicate uses an ink clipboard within
+  this tab, including between opened notebooks. Smaller/Larger and Rotate change placement
+  on the same shape IDs; style and raw captures remain separate. **Deselect** lets you start a new
   loop inside the old selection. Selection is temporary and clears when
   changing page/tool; its input and shape references remain in full history.
   Choose the lasso policy under Ink & actions. **All vertices inside** tests
   output centerline vertices; a sparse segment may leave a concave loop.
   **Apply ink policies** reprocesses the selected group as one undoable edit.
-- **Undo** reverses the last ink or saved text edit on the active page.
-  **Clear ink** affects only that page's ink. Document/page operations are
-  not undoable yet. There is no redo.
+- **Undo / Redo** reverse/reapply edits in the current document in journal order, including
+  ink, saved content, page insertion/reordering/deletion and document naming. Editing after
+  undo clears that document's redo branch. **Clear ink** affects only the current page.
+  Keyboard: Cmd/Ctrl-Z, Shift-Z/Y, C/V/D for ink, A for all page ink, S to save SQLite,
+  Delete/Backspace for selected ink, and Page Up/Down. Text fields keep native shortcuts.
 - **Text → Add page text** creates a positioned Markdown object, including
   inline LaTeX between `$…$` via locally bundled KaTeX. **Add linked note**
   creates content attached to the page without painting it. Each page can have
@@ -94,7 +113,8 @@ disabled during contact and while an edit is being saved.
   set position, dimensions and angle; **Show on page** toggles rendering.
   `math/latex` renders display math. HTML is escaped, remote images disabled,
   and TeX is rendered without trusted commands. This is a source editor with
-  previews, not WYSIWYG; lasso/drag currently moves ink only.
+  previews, not WYSIWYG. With the text panel open, page objects expose Move, Resize
+  and Rotate handles. A completed drag appends one object edit; cancellation restores it.
 - **Show detected boxes** under Ink & actions toggles translucent, rotated
   rectangle overlays. With Lasso active, tap a box label to select its constituent
   ink shapes. The baseline script recognizes closed outlines from one or several
@@ -105,7 +125,8 @@ disabled during contact and while an edit is being saved.
   Insert blank pages after the current page, move them earlier/later or delete
   them. Page numbers change; their IDs and annotations do not. A deleted page
   is hidden, with its captures/history retained in the full database. Keep at
-  least one page per blank document. PDF page order/count follow the source.
+  least one page per document. Blank, PDF, raster-image and SVG pages may be inserted,
+  reordered or deleted in any document, regardless of its original source.
 - **Events** browses actual SQLite tables/views with pagination and decoded JSON.
   App events show their referenced shape states.
 - **Raw strokes** displays capture records alongside a stored processing output.
@@ -125,7 +146,7 @@ disabled during contact and while an edit is being saved.
 
 Both database viewers include **Database diagnostics**, covering all documents:
 ink captures with any visible geometry, all raw captures used by visible ink,
-visible/total shapes, event/effect counts, document/page counts and JSON/PDF
+visible/total shapes, event/effect counts, document/page counts and raw JSON/embedded source
 payload sizes, rendered/linked content counts and active/total boxes with detector
 run/error counts. Visibility means *any fragment remains*, not a fraction of path
 length. Eraser/lasso/move/cancelled inputs contribute to the raw denominator,
@@ -184,23 +205,39 @@ URL imports require the remote server to allow CORS; there is no proxy. A failed
 import leaves the notebook usable. Imports are limited to 200 MiB and read the
 whole file into memory. Password-protected PDFs are not supported yet.
 
-The importer computes `sha256:<hex>` from the original file bytes. SQLite's
-`assets` table stores those exact bytes once, and `documents` maps a unique
-human name to the PDF hash. Reopening the same PDF selects its existing document
-and annotations. Renaming a document changes neither hash nor page IDs. The
-empty-name default document has no PDF; additional blank documents can be created.
-Names cannot contain `/`, leaving a human address such as `Paper/2` or `/1`.
-Use document/page IDs internally: names and page positions are mutable.
+The importer computes `sha256:<hex>` from original bytes. `asset_refs` stores content
+metadata; the optional `blobs(hash, data)` table embeds bytes by default. `assets` is a
+compatibility read view. Disable **Embed source files** for an external-content notebook.
+References survive; this browser needs the bytes or a replacement backend to render them.
+The same PDF can be a source in any number of independent notebooks. Within one notebook,
+identical bytes are embedded once, and multiple pages/documents may reference that hash.
 
-PDF.js renders the source as a separate canvas beneath the ink. Each PDF page
-uses its default rotated/cropped viewport dimensions in PDF points; the ink and
-background share that coordinate space and CSS size. Zoom/DPR change rendering
-resolution, not stored coordinates. The original PDF is unchanged. SQLite
-exports include the PDF and annotation overlay; **annotated-PDF export**, text
-selection, interactive links/forms and password prompts are not implemented.
+**Open PDF** creates/selects a named document; **Insert PDF after current page** instead
+inserts its pages into the current document. **Add image / SVG** inserts a page by default;
+**Place image / SVG on current page** creates a movable content object. `image/svg+xml`
+objects also accept `{source: "<svg …>…</svg>"}` through the content editor. SVG renders
+in an image context, without inserting document-supplied markup/scripts into the app DOM.
 
-`pdf/library.ts` depends only on `PdfSource.read(contentId): Promise<Uint8Array>`
-from `pdf/source.ts`. The current implementation is `DatabaseClient.read`, backed
+Each page has independent extent (`page` or `whiteboard`) and an extensible background
+source: `source_kind`, optional `source_hash`, optional one-based `source_page`, and opaque
+`source_json`. PDF pages use their rotated/cropped PDF.js viewport dimensions; image and
+SVG pages use intrinsic image dimensions. Add another source kind through
+`Journal.setPageSource` and `PageSources.renderers` (e.g. a future map adapter). Unknown
+kinds retain their metadata and display a placeholder. Names remain a mutable human index,
+with addresses such as `Paper/2` or `/1`; use stable document/page IDs internally.
+`documents.pdf_hash` is only a legacy import convenience, not the page's source of truth.
+
+Backgrounds render beneath the ink, sharing page coordinates and CSS extent. Zoom/DPR
+change rendering resolution, not stored coordinates or original source files. **Select PDF
+text** in Ink & actions overlays a selectable text layer; switch it off to draw there.
+**Annotated PDF · current document** exports mixed pages, ink and rendered objects as a
+flattened raster PDF, retaining each page's dimensions. Whiteboards export content bounds.
+It excludes linked notes and diagnostic boxes. It is not a vector/editable PDF export;
+interactive links/forms and password-protected PDF prompts remain unsupported.
+
+`pdf/library.ts` and `page-sources.ts` depend only on the generic
+`ContentSource.read(contentId): Promise<Uint8Array>` boundary in `content.ts`
+(`PdfSource` is a type alias). The current implementation is `DatabaseClient.read`, backed
 by SQLite in the worker. Replace the injected source to read from another CAS
 without changing PDF rendering or navigation. Current SHA-256 IDs are verified
 on import/read. Other future CID schemes must be verified by their backend.
@@ -213,7 +250,7 @@ implemented in this prototype. PDF.js fonts/decoders/worker are bundled locally.
 
 ## Identity and schema
 
-See [src/schema.sql](src/schema.sql). The current schema version is **5**.
+See [src/schema.sql](src/schema.sql). The current schema version is **6**.
 Earlier notebooks require export/reset; no backward migration is provided.
 
 | Table/view | Purpose |
@@ -224,12 +261,13 @@ Earlier notebooks require export/reset; no backward migration is provided.
 | `shapes` | Geometry instances: ID, output ID, fractional output-vertex range |
 | `styles` | Color, base line width, opacity and blend mode |
 | `app_events` | Unified ordered operations: ID, edit time, kind, page, input/tool/style/policy and causal event references |
-| `app_event_shapes` | Complete shape visibility, page, style, offset and paint-order snapshots per edit |
+| `app_event_shapes` | Complete shape visibility, page, style, offset/scale/rotation and paint-order snapshots per edit |
 | `latest_shape_states` | Each shape's newest state, ordered by app-event ID |
 | `visible_shapes` | Current visible states joined to their geometry, style and raw input |
-| `assets` | Content ID, media type, byte length and original PDF bytes |
-| `documents` | Unique human name and optional PDF content reference |
-| `pages` | Stable ID, document, one-based page number, source PDF page, dimensions/kind and deletion state |
+| `asset_refs`, `blobs`, `assets` | Content metadata, optional embedded bytes, and joined read view |
+| `documents`, `pages` | Stable identities and rebuildable topology/name caches |
+| `app_event_documents`, `app_event_pages` | Complete journaled name, source, order, extent and deletion effects |
+| `current_documents`, `current_pages` | Authoritative latest event projections, with the implicit default page seed |
 | `capture_sessions` | Clock origin, browser/source and API exposure metadata |
 | `object_contents` | Immutable format/version/JSON payloads, without placement or edit metadata |
 | `page_objects`, `object_sources` | Content instances and optional immutable source-shape references |
@@ -276,7 +314,9 @@ is available for later text/document operations. A single transaction commits
 the capture, semantic edit and all shape effects. Undo appends inverse states;
 raw captures and prior operations are never rewritten by drawing edits.
 Document names and page topology are current-state projections with changes
-recorded in this same app-event stream; topology is not rebuilt by shape undo.
+recorded in this same app-event stream; readers use `current_documents`/`current_pages`, and undo/redo appends complete inverse/forward effects.
+The default empty-name document and first blank page have an implicit schema-defined seed.
+Topology cache rows never override recorded event effects.
 
 ```sql
 SELECT * FROM visible_shapes ORDER BY paint_order, id;
@@ -288,10 +328,10 @@ while placement and page-local editing keep their rendered content separate.
 
 ## Filtering history without changing rendering
 
-**Export SQLite → Full history** exports the journal. **Visible state only**
+**Export SQLite → Save notebook · full history** exports the journal. **Visible state + provenance**
 builds a new database containing:
 
-1. All document names, byte-identical PDF assets and page definitions, including
+1. All document names, byte-identical embedded source assets and page definitions, including
    empty/deleted pages and unbounded boards.
 2. Visible shapes and their original IDs/ranges, required outputs/policies,
    raw captures, capture sessions and styles.
@@ -301,7 +341,7 @@ builds a new database containing:
 4. One `history.baseline` event with current shape, object and box effects.
 
 The export verifies ordered shape render-input, object and active-box equality. It leaves the source
-unchanged, drops prior undo history, and allows subsequent edits/undo in the
+unchanged, drops prior undo history, and allows subsequent edits/undo/redo in the
 new database. When a visible fragment references a raw capture, that whole
 capture remains: compaction removes irrelevant edit history, not portions of
 sensor data inside a retained dependency. Provenance dependencies can retain
@@ -318,8 +358,26 @@ sqlite3 current-state.sqlite3 'PRAGMA foreign_key_check; PRAGMA integrity_check;
 The CLI refuses to overwrite an existing output and accepts only the current
 schema. Arbitrarily deleting historical events is unsafe: deleting a hide can
 resurrect a shape. Retaining a suffix later will need a baseline at the cutoff
-and all referenced resources. SQLite-file import is not implemented yet; exports
-can be inspected and processed with ordinary SQLite tools.
+and all referenced resources. Files can be reopened in the app and inspected with ordinary SQLite tools.
+
+**Just what’s drawn** is a stricter baseline export: active page backgrounds, visible ink,
+rendered objects, their current styles/placements, raw dependencies, policies and baked outputs.
+It drops linked notes, diagnostic boxes/runs, object-source provenance and previous edits.
+It also clears legacy document-level PDF hints; page source references remain authoritative.
+It retains complete raw contacts when any fragment is visible; it does not trim sensor samples.
+Use the provenance-preserving export when those hidden sources or research results matter.
+Both modes create a fresh database and leave the source unchanged.
+
+```sh
+pnpm compact notebook.sqlite3 drawn.sqlite3 --drawn
+pnpm compact notebook.sqlite3 external.sqlite3 --drawn --no-blobs
+sqlite3 notebook.sqlite3 < queries/drawn-state.sql
+```
+
+The read-only [drawn-state query](queries/drawn-state.sql) selects current pages, ink,
+rendered objects, raw IDs and resource metadata. Simply selecting surviving app events is
+insufficient: the exported baseline must capture the newest placement/visibility effect
+for every retained object. `drawn_raw_ids` and `drawn_objects` expose those useful subsets.
 
 ## Capture behavior and limits
 
@@ -365,8 +423,10 @@ of unsaved inputs; full SQLite export still covers saved records.
 
 Browser observations are not unprocessed digitizer samples. Native capture
 may expose additional measurements/corrections. Real iPad/unofficial-pencil
-sampling, latency and palm rejection still need device testing. Redo,
-synchronization and CAS integration remain future work.
+sampling, latency and palm rejection still need device testing. Synchronization and CAS
+integration remain future work. Contacts interrupted by blur, backgrounding or viewport
+rotation are cancelled using the observations already received; no synthetic sensor
+sample is fabricated.
 
 ## Processing experiments and reusable plugins
 
@@ -385,8 +445,8 @@ They are deterministic functions
 over copied observations. Output validation rejects invalid correspondence,
 nonfinite geometry and invalid width factors. An exception or malformed output
 persists an empty rejected result with diagnostics, keeping the raw contact.
-Whole-contact rejection is not a complete palm rejection system; the existing
-Finger drawing input filter still discards touch before capture when disabled.
+Whole-contact rejection is not a complete palm rejection system; turning off
+Finger drawing routes touches into navigation rather than ink capture.
 
 **Speed width** uses page units/ms, estimated from neighbouring raw sample
 intervals. It uses sample clocks, falling back to receipt clocks when missing;
@@ -464,8 +524,9 @@ accepts MathML and Vega Lite tags for experiments, but **neither has a renderer
 yet**. Documents cannot install executable renderers. Objects rotate around
 their center in radians (the editor shows degrees) and share page coordinates
 with PDF and ink. The DOM content layer currently paints above ink, with clipping
-to each object's rectangle; arbitrary shared z-order and drag/resize handles
-remain future UI work.
+to each object's rectangle; arbitrary shared z-order remains future UI work. Image/SVG content uses the same
+format registry as text and future generated artifacts; Move/Resize/Rotate handles
+use the same placement events.
 
 `detection.ts` is DOM-free. Inject `BoxDetectors` as the fourth `Journal`
 constructor argument, or edit `createBoxDetectors` for notebook experiments:
@@ -508,7 +569,7 @@ pnpm detect event-draw-full.sqlite3 ./trusted-candidate.mjs
 ```
 
 The optional module default-exports a `BoxDetector` callback. Node 24 also accepts
-strip-compatible `.ts`. The command reads schema 5 without modifying the source
+strip-compatible `.ts`. The command reads schema 6 without modifying the source
 and prints per-page candidate JSON. A custom module's ID hashes that file's bytes;
 a future CAS bundle should cover the entire dependency closure. These are trusted
 synchronous callbacks, with the same no-preemption limitation as ink processors.
@@ -568,13 +629,23 @@ or choice of model/provider.
 
 ## Remaining Notes functionality
 
-The prototype covers the basic handwriting/PDF annotation loop, selection,
-moving, erasing, positioned formatted text and linked notes. Reaching the important parts
-of a daily notes app still needs real-device latency/palm/pinch tuning, redo,
-direct rich-text manipulation and images, search/organization, reliable file import,
-annotated PDF export and backup/sync. Recognition, collaboration and a native
-capture bridge are separate larger projects. There is no meaningful completeness
-percentage before choosing which of these workflows matters most.
+The prototype now covers portable notebook files/recovery, mixed page backgrounds,
+handwriting, both erasers, undo/redo, ink selection/transforms/duplication, positioned
+text/math/images/SVG, linked notes, page picker/continuous reader, text/PDF search and
+flattened annotated-PDF export. Browser checks cover Chrome and WebKit; actual tablet
+sampling, latency, palm/gesture tuning, memory pressure and suspension still need testing.
+A native capture bridge, vector PDF export, inline rich-text editing, searchable handwriting,
+sync/collaboration and recognition remain separate work. The continuous reader opens a
+page in the editor for changes; it does not edit many pages simultaneously.
+
+Settled ink has a cached layer with grid-based view culling. Built-in local processors
+append live samples/path geometry incrementally with exact full-processing equivalence;
+nonlocal/experimental processors use the full API. Output parsing and PDF document caches
+are bounded; page previews allocate pixel buffers near the viewport and release them when
+out of range. Worker state deltas reuse unchanged entities instead of resending all raw
+JSON after every operation. The trusted baseline detector is bounded and runs in the DB
+worker at contact completion; an untrusted research plugin still needs an isolated worker
+with enforceable time/memory budgets.
 
 ## Code boundaries
 
@@ -593,7 +664,10 @@ percentage before choosing which of these workflows matters most.
 | `text.ts`, `ui/content-renderers.ts` | Shared Markdown/math rendering and trusted format adapters |
 | `storage/object-store.ts`, `ui/text-editor.ts`, `ui/page-objects.ts` | Immutable content, autosaved object drafts and positioned content/region layer |
 | `ui/page-navigation.ts`, `ui/notebook-location.ts` | Numbered navigation and disposable location preference |
-| `ui/page-surface.ts` | Fit/zoom/layout and cancellable PDF background rendering |
+| `ui/page-surface.ts`, `page-sources.ts` | Fit/pinch/layout and extensible cancellable background rendering |
+| `ui/page-browser.ts`, `ui/pdf-text.ts`, `pdf/export.ts` | Lazy grid/continuous reader, search/text selection and flattened export |
+| `ui/notebook-files.ts`, `ui/notebook-backups.ts`, `storage/notebooks.ts` | Portable files, recovery snapshots and validated atomic replacement |
+| `live-ink.ts`, `spatial.ts`, `state-transport.ts` | Incremental previews, disposable ink index and worker deltas |
 | `pdf/source.ts`, `pdf/library.ts` | Content backend contract, URL reading, digest policy and PDF.js cache |
 | `storage/documents.ts` | Document name/content index and page topology transactions |
 | `ui/canvas.ts` | Pointer lifecycle, pointer capture and frame scheduling |

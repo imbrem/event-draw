@@ -1,19 +1,22 @@
 PRAGMA foreign_keys = ON;
-PRAGMA user_version = 5;
+PRAGMA user_version = 6;
 
 -- Content IDs are opaque to readers. The current importer emits sha256:<hex>.
-CREATE TABLE IF NOT EXISTS assets (
+CREATE TABLE IF NOT EXISTS asset_refs (
   hash TEXT PRIMARY KEY,
   media_type TEXT NOT NULL,
-  byte_length INTEGER NOT NULL CHECK (byte_length > 0),
-  data BLOB NOT NULL CHECK (length(data) = byte_length)
+  byte_length INTEGER NOT NULL CHECK (byte_length > 0)
 ) STRICT;
+
+-- Blobs are optional portable payloads; references survive externalization.
+CREATE TABLE IF NOT EXISTS blobs (hash TEXT PRIMARY KEY REFERENCES asset_refs(hash), data BLOB NOT NULL) STRICT;
+CREATE VIEW IF NOT EXISTS assets AS SELECT a.*, b.data FROM asset_refs a LEFT JOIN blobs b USING(hash);
 
 -- Human names are an index over document identity, separate from page identity.
 CREATE TABLE IF NOT EXISTS documents (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL UNIQUE CHECK (instr(name, '/') = 0),
-  pdf_hash TEXT UNIQUE REFERENCES assets(hash)
+  pdf_hash TEXT REFERENCES asset_refs(hash)
 ) STRICT;
 INSERT OR IGNORE INTO documents VALUES (1, '', NULL);
 
@@ -22,6 +25,9 @@ CREATE TABLE IF NOT EXISTS pages (
   document_id INTEGER NOT NULL REFERENCES documents(id),
   page_number INTEGER NOT NULL CHECK (page_number > 0),
   source_page INTEGER CHECK (source_page > 0),
+  source_kind TEXT NOT NULL DEFAULT 'blank',
+  source_hash TEXT REFERENCES asset_refs(hash),
+  source_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(source_json)),
   deleted INTEGER NOT NULL DEFAULT 0 CHECK (deleted IN (0, 1)),
   kind TEXT NOT NULL CHECK (kind IN ('page', 'whiteboard')),
   width REAL,
@@ -30,7 +36,7 @@ CREATE TABLE IF NOT EXISTS pages (
       OR (kind = 'whiteboard' AND width IS NULL AND height IS NULL AND source_page IS NULL))
 ) STRICT;
 CREATE INDEX IF NOT EXISTS document_page_order ON pages(document_id, deleted, page_number);
-INSERT OR IGNORE INTO pages VALUES (1, 1, 1, NULL, 0, 'page', 1000.0, 1200.0);
+INSERT OR IGNORE INTO pages (id,document_id,page_number,kind,width,height) VALUES(1,1,1,'page',1000.0,1200.0);
 
 CREATE TABLE IF NOT EXISTS capture_sessions (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -96,11 +102,32 @@ CREATE TABLE IF NOT EXISTS app_events (
   eraser_radius REAL CHECK (eraser_radius > 0),
   undoable INTEGER NOT NULL DEFAULT 0 CHECK (undoable IN (0, 1)),
   undo_of_event_id INTEGER REFERENCES app_events(id),
+  redo_of_event_id INTEGER REFERENCES app_events(id),
   data_version INTEGER NOT NULL DEFAULT 1 CHECK (data_version > 0),
   data_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(data_json))
 ) STRICT;
-CREATE UNIQUE INDEX IF NOT EXISTS one_undo_per_event
-  ON app_events(undo_of_event_id) WHERE undo_of_event_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS undo_history ON app_events(undo_of_event_id);
+-- Complete event effects are authoritative; topology tables are rebuildable caches.
+CREATE TABLE IF NOT EXISTS app_event_documents (
+  app_event_id INTEGER NOT NULL REFERENCES app_events(id), document_id INTEGER NOT NULL REFERENCES documents(id),
+  name TEXT NOT NULL, pdf_hash TEXT REFERENCES asset_refs(hash), PRIMARY KEY(app_event_id,document_id)
+) STRICT;
+CREATE TABLE IF NOT EXISTS app_event_pages (
+  app_event_id INTEGER NOT NULL REFERENCES app_events(id), page_id INTEGER NOT NULL REFERENCES pages(id),
+  document_id INTEGER NOT NULL REFERENCES documents(id), page_number INTEGER NOT NULL,
+  source_page INTEGER, source_kind TEXT NOT NULL, source_hash TEXT REFERENCES asset_refs(hash), source_json TEXT NOT NULL CHECK(json_valid(source_json)),
+  deleted INTEGER NOT NULL CHECK(deleted IN(0,1)), kind TEXT NOT NULL, width REAL, height REAL,
+  PRIMARY KEY(app_event_id,page_id)
+) STRICT;
+CREATE INDEX IF NOT EXISTS page_effect_history ON app_event_pages(page_id,app_event_id DESC);
+CREATE VIEW IF NOT EXISTS current_pages AS
+SELECT e.page_id AS id,e.document_id,e.page_number,e.source_page,e.source_kind,e.source_hash,e.source_json,e.deleted,e.kind,e.width,e.height
+FROM app_event_pages e WHERE NOT EXISTS(SELECT 1 FROM app_event_pages n WHERE n.page_id=e.page_id AND n.app_event_id>e.app_event_id)
+UNION ALL SELECT id,1,1,NULL,'blank',NULL,'{}',0,'page',1000.0,1200.0 FROM pages WHERE id=1 AND NOT EXISTS(SELECT 1 FROM app_event_pages WHERE page_id=1);
+CREATE VIEW IF NOT EXISTS current_documents AS
+SELECT e.document_id AS id,e.name,e.pdf_hash FROM app_event_documents e
+WHERE NOT EXISTS(SELECT 1 FROM app_event_documents n WHERE n.document_id=e.document_id AND n.app_event_id>e.app_event_id)
+UNION ALL SELECT id,'',NULL FROM documents WHERE id=1 AND NOT EXISTS(SELECT 1 FROM app_event_documents WHERE document_id=1);
 
 -- Complete placement/style/visibility snapshots make replay and undo simple.
 CREATE TABLE IF NOT EXISTS app_event_shapes (
@@ -111,6 +138,8 @@ CREATE TABLE IF NOT EXISTS app_event_shapes (
   style_id INTEGER NOT NULL REFERENCES styles(id),
   offset_x REAL NOT NULL,
   offset_y REAL NOT NULL,
+  scale REAL NOT NULL DEFAULT 1 CHECK(scale>0),
+  rotation REAL NOT NULL DEFAULT 0,
   paint_order INTEGER NOT NULL,
   PRIMARY KEY (app_event_id, shape_id)
 ) STRICT;
@@ -126,7 +155,7 @@ WHERE NOT EXISTS (
 
 CREATE VIEW IF NOT EXISTS visible_shapes AS
 SELECT s.id, o.raw_stroke_id, s.output_id, s.start_index, s.end_index,
-       e.page_id, e.style_id, e.offset_x, e.offset_y, e.paint_order,
+       e.page_id, e.style_id, e.offset_x, e.offset_y, e.scale, e.rotation, e.paint_order,
        t.color, t.line_width, t.opacity, t.blend_mode, r.data_version, r.data_json,
        o.data_version AS output_version, o.data_json AS output_json
 FROM latest_shape_states e
@@ -134,7 +163,7 @@ JOIN shapes s ON s.id = e.shape_id
 JOIN ink_outputs o ON o.id = s.output_id
 JOIN stroke_events r ON r.id = o.raw_stroke_id
 JOIN styles t ON t.id = e.style_id
-JOIN pages p ON p.id = e.page_id
+JOIN current_pages p ON p.id = e.page_id
 WHERE e.visible = 1 AND p.deleted = 0;
 
 -- Content is independent of its page placement or whether it is rendered.
@@ -173,7 +202,7 @@ CREATE VIEW IF NOT EXISTS visible_objects AS
 SELECT o.id, e.page_id, e.content_id, c.format, c.data_version, c.data_json,
        e.rendered, e.x, e.y, e.width, e.height, e.rotation, e.label, e.paint_order
 FROM latest_object_states e JOIN page_objects o ON o.id = e.object_id
-JOIN object_contents c ON c.id = e.content_id JOIN pages p ON p.id = e.page_id
+JOIN object_contents c ON c.id = e.content_id JOIN current_pages p ON p.id = e.page_id
 WHERE e.visible = 1 AND p.deleted = 0;
 
 CREATE TABLE IF NOT EXISTS detector_policies (
@@ -221,4 +250,7 @@ CREATE VIEW IF NOT EXISTS active_boxes AS
 SELECT b.*, (SELECT json_group_array(shape_id) FROM
   (SELECT shape_id FROM box_shapes WHERE box_id = b.id ORDER BY shape_id)) AS shape_ids
 FROM latest_box_states e JOIN detected_boxes b ON b.id = e.box_id
-JOIN pages p ON p.id = b.page_id WHERE e.active = 1 AND p.deleted = 0;
+JOIN current_pages p ON p.id = b.page_id WHERE e.active = 1 AND p.deleted = 0;
+
+CREATE VIEW IF NOT EXISTS drawn_objects AS SELECT * FROM visible_objects WHERE rendered=1;
+CREATE VIEW IF NOT EXISTS drawn_raw_ids AS SELECT DISTINCT raw_stroke_id AS id FROM visible_shapes;

@@ -77,7 +77,7 @@ async function clearPage(page: Page) {
 }
 async function download(page: Page, id: string) {
   if (id !== '#export-existing') await menu(page);
-  if (id !== '#export-existing') await page.locator('.export-menu summary').click();
+  if (id !== '#export-existing') await page.locator('.export-menu').evaluate((e)=>{(e as HTMLDetailsElement).open=true;});
   const next = page.waitForEvent('download');
   await page.locator(id).click();
   const path = await (await next).path();
@@ -425,7 +425,7 @@ test('PDF file and URL imports deduplicate by hash; annotations survive navigati
   await expect(page.locator('#save-state')).toHaveText('Saved');
   await expect(page.locator('#page-total')).toHaveText('/ 3');
   await expect(page.locator('#document-hash')).toHaveText(hash);
-  await expect(page.locator('#blank-page-controls')).toBeHidden();
+  await expect(page.locator('#blank-page-controls')).not.toHaveAttribute('hidden');
   await expect(page.locator('#canvas')).toHaveAttribute('data-view-width', '600');
   const painted = () => page.locator('#pdf-canvas').evaluate((c) => {
     const canvas = c as HTMLCanvasElement;
@@ -852,4 +852,64 @@ test('speed/pressure formulas are configurable in notebook and per-trace preview
   await page.getByLabel('Preview Pressure policy').selectOption('speed-width@1');
   await page.getByLabel('Preview Speed exponent').fill('2'); await page.getByRole('button', { name: 'Preview policies', exact: true }).click();
   await expect(page.locator('.output-status')).toHaveText('Experimental preview · not saved');
+});
+
+test('notebook files reopen atomically, recovery restores replacement, and drawn export omits linked notes',async({page})=>{
+  const errors:string[]=[];page.on('pageerror',(e)=>errors.push(e.message));
+  await page.goto('/');await stroke(page);await page.locator('#toggle-text').click();await page.locator('#add-linked-note').click();await page.locator('#text-source').fill('private provenance');await page.locator('#close-text').click();
+  const path=await download(page,'#export-full'),bytes=readFileSync(path!);
+  const drawn=await exported(page,'#export-drawn');try{expect(drawn.prepare('SELECT * FROM visible_shapes').all()).toHaveLength(1);expect(drawn.prepare('SELECT * FROM visible_objects').all()).toHaveLength(0);expect(drawn.prepare('SELECT * FROM app_events').all()).toHaveLength(1);}finally{drawn.close();}
+  await menu(page);await page.locator('#new-notebook').click();await expect(page.locator('#counts')).toHaveText('0 visible · 0 raw strokes · 0 events');
+  await menu(page);await page.locator('#restore-backup').click();await expect(page.locator('#counts')).toContainText('1 visible');
+  await menu(page);await page.locator('#notebook-file').setInputFiles({name:'Saved.sqlite3',mimeType:'application/vnd.sqlite3',buffer:bytes});await expect(page.locator('#notebook-name')).toHaveText('Saved.sqlite3');await expect(page.locator('#counts')).toContainText('1 visible');
+  await menu(page);await page.locator('#notebook-file').setInputFiles({name:'bad.sqlite3',mimeType:'application/vnd.sqlite3',buffer:Buffer.from('not a database')});await expect(page.locator('#notice')).toContainText('Choose a SQLite notebook');await expect(page.locator('#counts')).toContainText('1 visible');
+  await menu(page,false);await stroke(page,[[100,250],[500,250]]);await expect(page.locator('#counts')).toContainText('2 visible');
+  const restyled=new DatabaseSync(path!);restyled.prepare('UPDATE styles SET color=?').run('#e14433');restyled.close();await menu(page);await page.locator('#notebook-file').setInputFiles({name:'Other colors.sqlite3',mimeType:'application/vnd.sqlite3',buffer:readFileSync(path!)});await expect(page.locator('#notebook-name')).toHaveText('Other colors.sqlite3');
+  await expect.poll(()=>page.locator('#canvas').evaluate((element)=>{const c=element as HTMLCanvasElement;return [...c.getContext('2d')!.getImageData(Math.round(200/Number(c.dataset.viewWidth)*c.width),Math.round(150/Number(c.dataset.viewHeight)*c.height),1,1).data];})).toEqual([225,68,51,255]);expect(errors).toEqual([]);
+});
+
+test('mixed SVG, image, PDF and blank pages export as a portable notebook and annotated PDF',async({page})=>{
+  const errors:string[]=[];page.on('pageerror',(e)=>errors.push(e.message));
+  await page.goto('/');await expect(page.locator('#save-state')).toHaveText('Saved');
+  const svg=Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="600" height="400"><rect width="600" height="400" fill="#ffe080"/><circle cx="300" cy="200" r="80" fill="#c05040"/></svg>');
+  await menu(page);await page.locator('#image-file').setInputFiles({name:'drawing.svg',mimeType:'image/svg+xml',buffer:svg});await expect(page.locator('#page-number')).toHaveValue('2');await expect(page.locator('#save-state')).toHaveText('Saved');await stroke(page,[[60,50],[500,70]]);
+  await menu(page);await page.locator('#image-as-object').check();await page.locator('#image-file').setInputFiles({name:'object.svg',mimeType:'image/svg+xml',buffer:svg});await expect(page.locator('.page-object img')).toHaveCount(1);await expect(page.locator('.page-object img')).toBeVisible();await page.screenshot({path:'test-results/svg-page.png',fullPage:true});
+  const png=Buffer.from(await page.evaluate(()=>{const canvas=document.createElement('canvas');canvas.width=400;canvas.height=300;const ctx=canvas.getContext('2d')!;ctx.fillStyle='#90b0c0';ctx.fillRect(0,0,400,300);return canvas.toDataURL('image/png').split(',')[1];}),'base64');
+  await menu(page);await page.locator('#image-as-object').uncheck();await page.locator('#image-file').setInputFiles({name:'photo.png',mimeType:'image/png',buffer:png});await expect(page.locator('#page-number')).toHaveValue('3');await expect(page.locator('#save-state')).toHaveText('Saved');await page.screenshot({path:'test-results/image-page.png',fullPage:true});
+  await menu(page);await page.locator('#insert-pdf').check();await page.locator('#pdf-file').setInputFiles(pdfFixture.pathname);await expect(page.locator('#page-total')).toHaveText('/ 6');
+  await menu(page);await page.locator('#add-page').click();await expect(page.locator('#page-total')).toHaveText('/ 7');await page.locator('#page-earlier').click();await menu(page,false);await expect(page.locator('#page-number')).toHaveValue('4');
+  const db=await exported(page);try{expect(db.prepare('SELECT count(*) AS n FROM blobs').get()!.n).toBe(3);expect(db.prepare('SELECT source_kind FROM current_pages WHERE deleted=0 ORDER BY page_number').all()).toEqual([{source_kind:'blank'},{source_kind:'svg'},{source_kind:'image'},{source_kind:'blank'},{source_kind:'pdf'},{source_kind:'pdf'},{source_kind:'pdf'}]);expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);}finally{db.close();}
+  const pdfPath=await download(page,'#export-pdf');const {PDFDocument}=await import('pdf-lib');const pdf=await PDFDocument.load(readFileSync(pdfPath!));expect(pdf.getPageCount()).toBe(7);expect(pdf.getPage(1).getSize()).toEqual({width:600,height:400});
+  await menu(page);await page.locator('.export-menu').evaluate((e)=>{(e as HTMLDetailsElement).open=true;});await page.locator('#include-blobs').uncheck();await menu(page,false);const external=await exported(page);try{expect(external.prepare('SELECT count(*) AS n FROM blobs').get()!.n).toBe(0);expect(external.prepare('SELECT count(*) AS n FROM asset_refs').get()!.n).toBe(3);}finally{external.close();}
+  await menu(page);await page.locator('#insert-pdf').uncheck();await page.locator('#pdf-file').setInputFiles({name:'Flattened.pdf',mimeType:'application/pdf',buffer:readFileSync(pdfPath!)});await expect(page.locator('#document')).toHaveValue('2');await expect(page.locator('#save-state')).toHaveText('Saved');await page.locator('#page-number').fill('3');await page.locator('#page-number').press('Enter');await page.locator('#next-page').focus();await expect(page.locator('#save-state')).toHaveText('Saved');
+  await expect.poll(()=>page.locator('#pdf-canvas').evaluate((element)=>{const c=element as HTMLCanvasElement;const pixel=c.getContext('2d')!.getImageData(c.width/2,c.height/2,1,1).data;return [...pixel];})).toEqual([144,176,192,255]);
+  await page.screenshot({path:'test-results/mixed-notebook.png',fullPage:true});expect(errors).toEqual([]);
+});
+
+test('redo, duplicate, rotation and object dragging are event-backed without duplicating raw captures',async({page})=>{
+  await page.goto('/');await stroke(page);await page.keyboard.press('Meta+a');await expect(page.locator('#selection-count')).toHaveText('1 selected');
+  await page.locator('#duplicate-selection').click();await expect(page.locator('#counts')).toContainText('2 visible · 1 raw strokes');await page.locator('#rotate-selection').click();
+  await page.locator('#undo').click();await page.locator('#undo').click();await expect(page.locator('#counts')).toContainText('1 visible');await page.locator('#redo').click();await expect(page.locator('#counts')).toContainText('2 visible');
+  await page.locator('#toggle-text').click();await page.locator('#add-page-text').click();await page.locator('#text-source').fill('Move me $x=5$');await expect(page.locator('#text-status')).toHaveText('Saved');
+  const handle=page.getByRole('button',{name:'Move object 1',exact:true}),box=(await handle.boundingBox())!;await page.mouse.move(box.x+box.width/2,box.y+box.height/2);await page.mouse.down();await page.mouse.move(box.x+box.width/2+30,box.y+box.height/2+35,{steps:5});await page.mouse.up();await expect(page.locator('#save-state')).toHaveText('Saved');
+  const db=await exported(page);try{expect(Number(db.prepare('SELECT x FROM visible_objects').get()!.x)).toBeGreaterThan(100);expect(db.prepare("SELECT count(*) AS n FROM app_events WHERE kind='object.set'").get()!.n).toBeGreaterThan(0);expect(db.prepare('SELECT count(*) AS n FROM stroke_events').get()!.n).toBe(1);}finally{db.close();}
+});
+
+test('two-finger navigation cancels accidental ink, pen rejects palms, and interruption retains observations',async({page})=>{
+  await page.goto('/');await expect(page.locator('#save-state')).toHaveText('Saved');
+  const size=await page.locator('#paper').boundingBox();
+  await page.locator('#canvas').evaluate((canvas)=>{
+    canvas.setPointerCapture=()=>{};const rect=canvas.getBoundingClientRect();const send=(type:string,id:number,x:number,y:number,pointerType='touch')=>canvas.dispatchEvent(new PointerEvent(type,{pointerId:id,pointerType,isPrimary:id===10,clientX:rect.x+x,clientY:rect.y+y,buttons:type==='pointerup'?0:1,button:0,bubbles:true}));
+    send('pointerdown',10,100,100);send('pointerdown',11,200,100);send('pointermove',11,300,100);send('pointerup',11,300,100);send('pointerup',10,100,100);
+  });
+  await expect(page.locator('#save-state')).toHaveText('Saved');expect((await page.locator('#paper').boundingBox())!.width).toBeGreaterThan(size!.width);
+  await page.locator('#canvas').evaluate((canvas)=>{const r=canvas.getBoundingClientRect();const send=(type:string,id:number,pointerType:string)=>canvas.dispatchEvent(new PointerEvent(type,{pointerId:id,pointerType,clientX:r.x+100,clientY:r.y+100,buttons:1,button:0,bubbles:true}));send('pointerdown',20,'pen');send('pointerdown',21,'touch');document.dispatchEvent(new Event('visibilitychange'));window.dispatchEvent(new Event('blur'));send('pointerup',21,'touch');});
+  await expect(page.locator('#counts')).toContainText('0 visible · 2 raw strokes');const db=await exported(page);try{expect(db.prepare("SELECT kind FROM app_events").all()).toEqual([{kind:'input.cancel'},{kind:'input.cancel'}]);}finally{db.close();}
+});
+
+test('page picker searches linked notes and PDF text and exposes selectable PDF text',async({page})=>{
+  const errors:string[]=[];page.on('pageerror',(e)=>errors.push(e.message));await page.goto('/');await expect(page.locator('#save-state')).toHaveText('Saved');await menu(page);await page.locator('#pdf-file').setInputFiles(pdfFixture.pathname);await expect(page.locator('#save-state')).toHaveText('Saved');
+  await page.locator('#toggle-text').click();await page.locator('#add-linked-note').click();await page.locator('#text-source').fill('needle algebra');await page.locator('#close-text').click();await expect(page.locator('#save-state')).toHaveText('Saved');
+  await page.locator('#browse-pages').click();await expect(page.locator('.page-thumbnail')).toHaveCount(3);await page.locator('#reader-mode').click();await expect(page.locator('.continuous-reader')).toBeVisible();await expect(page.locator('.page-thumbnail canvas').first()).toBeVisible();await page.screenshot({path:'test-results/continuous-reader.png',fullPage:true});await page.locator('#reader-mode').click();await page.getByLabel('Search notebook').fill('needle');await page.locator('#notebook-search-form button').click();await expect(page.locator('#search-status')).toContainText('1 matching pages');await page.locator('.search-results button').click();
+  await page.locator('#ink-settings').evaluate((e)=>{(e as HTMLDetailsElement).open=true;});await page.locator('#select-pdf-text').check();await expect(page.locator('#pdf-text span')).not.toHaveCount(0);await expect(page.locator('#pdf-text')).toBeVisible();await page.screenshot({path:'test-results/pdf-text-layer.png',fullPage:true});expect(errors).toEqual([]);
 });
