@@ -14,7 +14,7 @@ React or other UI framework. There is no native wrapper, application server or s
 | Ink rendering | Canvas 2D and cached `Path2D`; variable-radius discs and tangent hulls | Browser-specific renderer. Baked vertices/width factors and shape placement can feed another renderer. |
 | Page content | PDF.js 6.4, markdown-it 15, KaTeX 0.19, DOM/SVG/image renderers; pdf-lib and html2canvas-pro for export | Content IDs/backends, payload codecs and placement are reusable; default viewing/editing/export adapters depend on the browser/libraries. |
 | Shell and tools | Small TypeScript DOM modules; typed frontend host/commands, extension slots, configurable toolbar/footer | Default controls require DOM; headless commands and data contracts are separate. Trusted modules only. |
-| Tooling | Vite 8, TypeScript 7, pnpm 12, Node 24+, Node test runner and Playwright Chromium/WebKit | Static hosting; GitHub Actions checks builds/tests and deploys to private GitHub Pages. |
+| Tooling | Vite 8, TypeScript 7, pnpm 12, Node 24+, Node test runner and Playwright Chromium/WebKit | Static hosting; GitHub Actions checks builds/tests and deploys to public GitHub Pages. |
 
 The core is **host-independent JavaScript**, not a language-independent binary interface.
 It currently has no Rust implementation or general WASM plugin loader. A covalence/Rust

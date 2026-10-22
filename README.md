@@ -6,8 +6,8 @@ The core and exchange APIs are reusable without the UI.
 
 ## Try it
 
-[Open the internal app](https://sturdy-bassoon-w9lk351.pages.github.io/)
-in Safari on your iPad or a desktop browser. Sign in to GitHub with repository read access.
+[Open the app](https://imbrem.github.io/event-draw/)
+in Safari on your iPad or a desktop browser. No sign-in is required.
 No Xcode or macOS update is needed for browser use.
 
 - Draw with Pen or Highlighter; choose a common color or a custom one.
@@ -86,4 +86,4 @@ Read the [architecture and extension examples](docs/README.md),
 [feature/schema reference](docs/reference.md), [trace formats/compression results](docs/trace-storage.md),
 [stack and portability](docs/stack.md), and [SQLite schema](src/schema.sql).
 The [CI workflow](.github/workflows/pages.yml) tests production builds in Chromium/WebKit
-and deploys `main` to the private Pages site after checks pass.
+and deploys `main` to the public Pages site after checks pass.

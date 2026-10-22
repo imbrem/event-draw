@@ -21,7 +21,7 @@ Open http://localhost:5173. Draw with a mouse, pen, or finger. Turn off
 touch, with a short guard after pen-up. This is heuristic palm filtering, not native digitizer rejection. On a tablet, use a trusted HTTPS origin for persistent storage.
 Plain LAN HTTP cannot provide browser filesystem storage; where supported,
 the app uses an explicitly labelled temporary database. Export before closing.
-The internal deployment below provides a stable HTTPS origin.
+The public deployment below provides a stable HTTPS origin.
 
 Each exported SQLite file is a notebook. The app autosaves one working copy in this browser
 profile and origin (including port). **Menu → Open notebook**, **New notebook**, and
@@ -60,13 +60,10 @@ profile because ephemeral WebKit contexts do not support OPFS. SQLite WASM
 runs in a worker with OPFS SAH-pool persistence. No special HTTP headers are
 needed for this VFS. Runtime assets are served locally; no CDN is needed.
 
-## Internal deployment
+## Public deployment
 
-Open https://sturdy-bassoon-w9lk351.pages.github.io/ on your Mac or in Safari on
-your iPad/iPhone. Sign in to GitHub with an account that can read
-`hiloopai/event-draw` (complete organization SSO if prompted). This Pages site
-is private, with HTTPS enforced; repository privacy alone would not guarantee
-private Pages access.
+Open https://imbrem.github.io/event-draw/ on your Mac or in Safari on your iPad/iPhone.
+The site is public, with HTTPS enforced; no GitHub sign-in is needed.
 
 Start with **Menu → Open PDF**, or draw on the blank page. **Insert text** adds positioned
 Markdown/math, and **Pages / Search** opens the page browser. Check that storage
@@ -86,11 +83,11 @@ WASM, to exercise project-path asset resolution. CI starts its own preview serve
 local browser checks use the already-running dev/preview server. Use a trailing slash
 when setting `TEST_BASE_URL` to a subpath.
 
-After checks pass on `main`, CI reads the configured private Pages URL, builds for
-its actual base path, and deploys via the `github-pages` environment. That environment
-allows only `main`; the workflow verifies `public: false` and never automatically
+After checks pass on `main`, CI reads the configured public Pages URL, builds for
+its actual base path, and deploys via the `github-pages` environment. The deployment job
+allows only `main`; the workflow verifies `public: true` and never automatically
 enables a missing Pages site. Manual redeployment is available through
-**Actions → Check and deploy private Pages → Run workflow** on `main`.
+**Actions → Check and deploy public Pages → Run workflow** on `main`.
 The workflow uses the built-in `GITHUB_TOKEN`, without a stored deployment secret.
 
 ## Notebook and database viewers
@@ -205,7 +202,7 @@ An unofficial pencil may report a finger or fixed/default pressure. The raw
 viewer and capture-session capability metadata help distinguish observations
 from actual hardware support; an exposed field is not proof of a measurement.
 
-The private Pages URL above is the easiest tablet test and needs no Mac server.
+The public Pages URL above is the easiest tablet test and needs no Mac server.
 For a quick drawing-only local check, open `http://<Mac-LAN-IP>:5173` on the same Wi-Fi
 while `pnpm dev` runs. macOS may request firewall access. LAN HTTP may require
 session-only storage; export before closing. For a meaningful persistence test,

@@ -1,4 +1,4 @@
-name: Check and deploy private Pages
+name: Check and deploy public Pages
 
 on:
   pull_request:
@@ -38,7 +38,7 @@ jobs:
           VITE_BASE_PATH: /event-draw/
 
   deploy:
-    name: Deploy internal site
+    name: Deploy public site
     needs: check
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
@@ -60,18 +60,18 @@ jobs:
         with:
           node-version: '24'
           cache: pnpm
-      - name: Require an existing private Pages site
-        run: gh api "repos/$GH_REPO/pages" | jq -e '.public == false and .build_type == "workflow"'
+      - name: Require the configured public Pages site
+        run: gh api "repos/$GH_REPO/pages" | jq -e '.public == true and .build_type == "workflow"'
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-      - name: Read Pages metadata (never enable a public site automatically)
+      - name: Read Pages metadata
         id: pages
         uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
         with:
           enablement: false
       - run: pnpm install --frozen-lockfile
-      - name: Build for the private Pages URL
+      - name: Build for the public Pages URL
         run: pnpm build
         env:
           VITE_BASE_PATH: ${{ steps.pages.outputs.base_path }}/
