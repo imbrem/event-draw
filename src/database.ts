@@ -13,11 +13,13 @@ import type { BrowseResult, Row, ViewerTable } from './storage/sql.ts';
 import type { DatabaseDiagnostics } from './storage/diagnostics.ts';
 import { StateDecoder, type StatePatch } from './state-transport.ts';
 import type { InkPolicy } from './ink.ts';
+import type { NotebookEntry } from './storage/app-catalog.ts';
 import type { ReplayReport } from './storage/event-stream.ts';
 
 export type Initialized =
   | {
       mode: 'persistent' | 'temporary';
+      notebook: NotebookEntry;
       state: State;
       sessionId: number;
       storageError: string | null;
@@ -64,11 +66,26 @@ export class DatabaseClient {
       this.worker.postMessage({ id, method, payload });
     });
   }
-  openNotebook(bytes: Uint8Array, session: CaptureSession) {
-    return this.call<Initialized>('openNotebook', { bytes, session });
+  openNotebook(bytes: Uint8Array, session: CaptureSession, name = 'Imported notebook') {
+    return this.call<Initialized>('openNotebook', { bytes, session, name });
   }
-  openEventStream(text: string, session: CaptureSession) {
-    return this.call<Initialized>('openEventStream', { text, session });
+  openEventStream(text: string, session: CaptureSession, name = 'Reconstructed notebook') {
+    return this.call<Initialized>('openEventStream', { text, session, name });
+  }
+  listNotebooks() {
+    return this.call<{ notebooks: NotebookEntry[]; activeId: number | null }>('listNotebooks');
+  }
+  exportStoredNotebook(id: number) {
+    return this.call<Uint8Array<ArrayBuffer>>('exportStoredNotebook', id);
+  }
+  createNotebook(name: string, session: CaptureSession) {
+    return this.call<Initialized>('createNotebook', { name, session });
+  }
+  switchNotebook(id: number, session: CaptureSession) {
+    return this.call<Initialized>('switchNotebook', { id, session });
+  }
+  renameNotebook(id: number, name: string) {
+    return this.call<NotebookEntry>('renameNotebook', { id, name });
   }
   exportEventStream(includeBlobs = true) {
     return this.call<string>('exportEventStream', includeBlobs);

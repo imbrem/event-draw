@@ -1,5 +1,5 @@
 import { PAGE_PRESETS } from '../pages.ts';
-import { undoIcon, redoIcon } from './icons.ts';
+import { undoIcon, redoIcon, notebooksIcon } from './icons.ts';
 
 export function element<T extends HTMLElement = HTMLElement>(id: string): T {
   const value = document.getElementById(id);
@@ -10,6 +10,7 @@ export function mountShell() {
   element('app').innerHTML = `
   <header class="app-bar">
     <span class="mark" aria-label="Event Draw">e.</span>
+    <button id="show-notebooks" title="Switch notebooks" aria-label="Notebooks">${notebooksIcon}<span id="active-notebook-name">Notebooks</span></button>
     <input id="document-title" aria-label="Document title" placeholder="Blank notes" autocomplete="off" maxlength="200">
     <nav id="page-navigation" aria-label="Page navigation"></nav>
     <span id="save-state" role="status">Opening…</span>
@@ -21,10 +22,10 @@ export function mountShell() {
           <button data-tab="events" aria-pressed="false">Events</button>
           <button data-tab="raw" aria-pressed="false">Raw strokes</button>
         </nav>
-        <section aria-label="Notebook files"><h2>Notebook file</h2>
-          <label class="file-button">Open notebook <input id="notebook-file" type="file" accept=".sqlite3,.sqlite,.db,application/vnd.sqlite3"></label>
+        <section aria-label="Notebook files"><h2>Notebooks</h2>
+          <label class="file-button">Import notebook <input id="notebook-file" type="file" accept=".sqlite3,.sqlite,.db,application/vnd.sqlite3"></label>
           <button id="new-notebook">New notebook</button><button id="restore-backup">Restore recovery copy</button>
-          <p id="notebook-name">Local notebook</p><p>Saved locally as you work. Save SQLite to keep a portable notebook. Opening or creating a notebook first keeps a recovery copy.</p>
+          <p id="notebook-name">Local notebook</p><p>Saved locally as you work. Save SQLite to keep a portable notebook. Importing adds a separate copy to your library. Use Notebooks in the top bar to switch.</p>
         </section>
         <section aria-label="Documents"><h2>Document</h2>
           <label id="document-choice">Choose document <select id="document" aria-label="Document"></select></label>
@@ -114,6 +115,7 @@ export function mountShell() {
       <div id="board-controls" hidden><span id="view-position"></span></div>
     </section>
     <section id="viewer-panel" hidden></section>
+    <dialog id="notebook-library" aria-label="Notebook library"></dialog>
     <dialog id="page-browser" aria-label="Pages and search"></dialog>
   </main><footer id="status-indicators" class="status-indicators" aria-label="Notebook indicators"></footer>`;
 }

@@ -17,14 +17,16 @@ No Xcode or macOS update is needed for browser use.
 - Choose **A** (or **T**), tap the page and type Markdown with `$LaTeX$`, or choose plain text.
   Double-click text to edit; drag to move and use selection handles to resize/rotate. **Notes** manages linked notes/properties.
 - **⌘/Ctrl+Z** undoes; **⌘/Ctrl+Shift+Z** or **Ctrl+Y** redoes. Text editors keep native undo.
+- **Notebooks** in the header opens the library: create, rename, or switch separate SQLite notebooks.
 - Edit the document title in the header. Numbered pages have separate stable identities.
 - **Menu** opens PDFs by file/URL, inserts pages/images/SVGs and exposes raw/event viewers and diagnostics.
 - **Menu → Export** saves a notebook, a reduced notebook, annotated PDF or typed JSONL events.
 - **Reconstruct from JSONL** imports full or filtered history and reports missing dependencies.
 
-The app stores one working notebook per browser profile/origin. SQLite files embed source
-blobs by default; export files to move between devices. Open/import replaces the working
-copy after retaining recovery data. There is no sync server.
+Each notebook has its own SQLite database. A separate app/config SQLite database holds the
+local catalog, notebook names and active selection. Existing local work is adopted in place.
+SQLite exports embed source blobs by default; import adds a separate library copy.
+Export files to move between devices; there is no sync server.
 
 **Schema UUID + SemVer (`0.0.0`):** older local notebooks need **Menu → Local state → Reset local notebook**.
 Export existing SQLite first if needed. There are no migrations or silent resets.

@@ -28,6 +28,8 @@ import { objectInput } from './ui/text-editor.ts';
 import { PageSources, inspectImage } from './page-sources.ts';
 import { registerAssetRenderer } from './ui/content-renderers.ts';
 import { NotebookFiles } from './ui/notebook-files.ts';
+import { NotebookLibrary } from './ui/notebook-library.ts';
+import type { NotebookEntry } from './storage/app-catalog.ts';
 import { keyboardShortcuts } from './ui/shortcuts.ts';
 import { PageBrowser } from './ui/page-browser.ts';
 import { PdfText } from './ui/pdf-text.ts';
@@ -51,6 +53,7 @@ export function startApp(
     config.indicators ?? defaultIndicators,
     () => db.diagnostics(),
   );
+  let activeNotebook: NotebookEntry | undefined;
   let selectedObject = 0;
   let clipboard: ClipboardInk[] = [];
   const location = new NotebookLocation();
@@ -424,6 +427,8 @@ export function startApp(
                   : background === 'error'
                     ? 'Background unavailable'
                     : 'Saved';
+    element<HTMLButtonElement>('show-notebooks').disabled =
+      active || writes > 0 || resetting || importing || !ownsDatabase;
     documentControls.update(state.documents, documentId, busy);
     paints.update(busy);
     element('document-hash').textContent =
@@ -486,6 +491,14 @@ export function startApp(
       element('storage').textContent = 'Open in another tab';
       element('recovery-actions').hidden = true;
     } else {
+      if (activeNotebook?.id !== result.notebook.id || activeNotebook?.uuid !== result.notebook.uuid) {
+        location.use(result.notebook.id);
+        ({ documentId, pageId } = location.read());
+      }
+      activeNotebook = result.notebook;
+      element('notebook-name').textContent = activeNotebook.name;
+      element('active-notebook-name').textContent = activeNotebook.name;
+      element('show-notebooks').title = 'Notebooks · ' + activeNotebook.name;
       state = result.state;
       sessionId = result.sessionId;
       ready = true;
@@ -518,7 +531,7 @@ export function startApp(
     if (!ownsDatabase || active || writes || resetting || importing) return;
     if (
       !confirm(
-        'Delete all local documents, PDFs, pages, captures and edit history? Export anything you want to keep first.',
+        'Clear the current notebook’s documents, PDFs, pages, captures and edit history? Other notebooks are kept. Export anything you want to keep first.',
       )
     )
       return;
@@ -785,24 +798,29 @@ export function startApp(
     element(id).onclick = () => {
       void edit(() => db.transformShapes(pageId, [...selected], change), undefined, false);
     };
+  async function flushNotebook() {
+    pageObjects.finishEditing();
+    await textEditor.flushAll();
+    await operations;
+    if (textEditor.dirty || unsaved.length)
+      throw new Error('Save text drafts or export unsaved input before changing notebooks.');
+  }
   const files = new NotebookFiles(db, session, {
-    canReplace: () => ready && !failed && !active && !writes && !importing,
+    canReplace: () => ownsDatabase && !active && !writes && !importing && !resetting,
     canBackup: () => ready && !failed && !active && !writes && !importing && !textEditor.dirty,
     revision: () => state.eventCount,
-    async flush() {
-      await textEditor.flushAll();
-      await operations;
-      if (textEditor.dirty)
-        throw new Error('Save text drafts or export unsaved input before replacing this notebook.');
-    },
+    notebookId: () => activeNotebook?.id ?? null,
+    flush: flushNotebook,
     busy(value) {
       importing = value;
       refresh();
     },
-    async replaced(result, name) {
+    async replaced(result) {
       surface.invalidate();
       pdfText.update(undefined, false);
       pdfs.close();
+      selectedObject = 0;
+      browser.close();
       textEditor.clear();
       views.clear();
       selected.clear();
@@ -810,12 +828,31 @@ export function startApp(
       documentId = 1;
       pageId = 1;
       await open(result);
-      element('notebook-name').textContent = name;
       setTab('notebook');
       options.open = false;
     },
     error,
   });
+  const library = new NotebookLibrary(element('notebook-library'), db, {
+    create: (name) => files.activate(() => db.createNotebook(name, session)),
+    select: (id) => files.activate(() => db.switchNotebook(id, session)),
+    async save(id) {
+      if (activeNotebook?.id === id) await flushNotebook();
+      return db.exportStoredNotebook(id);
+    },
+    renamed(item) {
+      if (activeNotebook?.id !== item.id) return;
+      activeNotebook = item;
+      element('notebook-name').textContent = item.name;
+      element('active-notebook-name').textContent = item.name;
+      element('show-notebooks').title = 'Notebooks · ' + item.name;
+    },
+    error,
+  });
+  element('show-notebooks').onclick = () => {
+    options.open = false;
+    void library.show();
+  };
   element<HTMLInputElement>('image-file').onchange = () => {
     const input = element<HTMLInputElement>('image-file'),
       file = input.files?.[0];
@@ -913,7 +950,8 @@ export function startApp(
       !writes &&
       !importing &&
       tab === 'notebook' &&
-      !element<HTMLDialogElement>('page-browser').open,
+      !element<HTMLDialogElement>('page-browser').open &&
+      !element<HTMLDialogElement>('notebook-library').open,
   );
   const backgroundSave = () => {
     if (document.hidden && !active && !importing) void textEditor.flushAll();
@@ -977,6 +1015,7 @@ export function startApp(
     indicators.close();
     extensions?.close();
     files.close();
+    library.close();
     document.removeEventListener('visibilitychange', backgroundSave);
     closeShortcuts();
     browser.close();

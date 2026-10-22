@@ -1,33 +1,25 @@
 /// <reference lib="webworker" />
 import { init as initZstd, compress, decompress } from '@bokuweb/zstd-wasm';
 import { cborZstdCodec, tracePayloads } from './trace-codecs.ts';
-import sqlite3InitModule, { type Database } from '@sqlite.org/sqlite-wasm';
+import sqlite3InitModule, { type SAHPoolUtil } from '@sqlite.org/sqlite-wasm';
 import schema from './schema.sql?raw';
 import { Journal } from './journal.ts';
-import { initializeSchema, resetSchema } from './storage/schema.ts';
-import type { BrowseResult, Row, SqlDatabase, ViewerTable } from './storage/sql.ts';
+import { resetSchema } from './storage/schema.ts';
+import type { BrowseResult, ViewerTable } from './storage/sql.ts';
 import type { CaptureSession, Gesture, ObjectInput } from './model.ts';
 import { replaceNotebook, validateNotebook } from './storage/notebooks.ts';
 import { StateEncoder } from './state-transport.ts';
 import type { State } from './model.ts';
 import { verifyContent } from './content.ts';
 import { createNotebookExchange } from './storage/event-stream.ts';
+import { NotebookWorkspace } from './storage/notebook-workspace.ts';
+import { sqliteAdapter as adapter } from './storage/sqlite-adapter.ts';
 
 // Build-time host choice. A research build can install a different source/sink,
 // payload binding set, framing codec, or inbound/outbound transformation stages.
 const exchange = createNotebookExchange();
 
 const scope = self as unknown as DedicatedWorkerGlobalScope;
-function adapter(db: Database): SqlDatabase {
-  return {
-    exec(sql, bind) {
-      db.exec(sql, bind ? { bind } : {});
-    },
-    all(sql, bind) {
-      return db.selectObjects(sql, bind) as Row[];
-    },
-  };
-}
 async function openDatabase() {
   await initZstd();
   tracePayloads.codecs.set(
@@ -38,21 +30,20 @@ async function openDatabase() {
     }),
   );
   const sqlite = await sqlite3InitModule();
-  let db: Database;
+  let pool: SAHPoolUtil | undefined;
   let mode: 'persistent' | 'temporary' = 'persistent';
   let storageError: string | null = null;
   try {
-    const pool = await sqlite.installOpfsSAHPoolVfs({
+    pool = await sqlite.installOpfsSAHPoolVfs({
       directory: '/event-draw-v1',
       preserveOnInitFailure: true,
     });
-    db = new pool.OpfsSAHPoolDb('/notes.sqlite3');
   } catch (error) {
     storageError = String(error);
     mode = 'temporary';
-    db = new sqlite.oo1.DB(':memory:');
   }
-  return { sqlite, db, mode, storageError };
+  const workspace = await NotebookWorkspace.open(sqlite, pool);
+  return { sqlite, workspace, mode, storageError };
 }
 type Opened = Awaited<ReturnType<typeof openDatabase>>;
 type Context = Opened | { mode: 'blocked' };
@@ -82,7 +73,6 @@ const ready = new Promise<Context>((resolve, reject) => {
 void ready.catch(() => {});
 
 const encoder = new StateEncoder();
-let retained: { db: Database; journal: Journal } | undefined;
 async function handle(request: { id: number; method: string; payload: any }) {
   try {
     const context = await ready;
@@ -93,32 +83,50 @@ async function handle(request: { id: number; method: string; payload: any }) {
       }
       throw new Error('Notebook already open in another tab. Close it and reload.');
     }
-    const { sqlite, db } = context;
-    if (
-      !retained ||
-      retained.db !== db ||
-      ['init', 'reset', 'openNotebook', 'openEventStream'].includes(request.method)
-    )
-      retained = { db, journal: new Journal(adapter(db)) };
-    const journal = retained.journal;
+    const { sqlite, workspace } = context;
+    const { db, journal } = workspace;
+    const initialized = (sessionId: number) => ({
+      mode: context.mode,
+      state: workspace.journal.state(),
+      sessionId,
+      storageError: context.storageError,
+      notebook: workspace.current!,
+    });
     let value: unknown;
     switch (request.method) {
       case 'init':
       case 'reset': {
-        if (request.method === 'reset') resetSchema(adapter(db), schema);
-        else initializeSchema(adapter(db), schema);
-        const sessionId = journal.startSession(
-          request.payload as CaptureSession,
-          request.method === 'init' ? 'app.open' : 'notebook.open',
+        if (request.method === 'reset') {
+          resetSchema(adapter(db), schema);
+          workspace.journal = new Journal(adapter(db));
+        }
+        value = initialized(
+          workspace.initialize(
+            request.payload as CaptureSession,
+            request.method === 'init' ? 'app.open' : 'notebook.open',
+          ),
         );
-        value = {
-          mode: context.mode,
-          state: journal.state(),
-          sessionId,
-          storageError: context.storageError,
-        };
         break;
       }
+      case 'listNotebooks':
+        value = { notebooks: workspace.catalog.list(), activeId: workspace.current?.id ?? null };
+        break;
+      case 'exportStoredNotebook': {
+        const bytes = workspace.exportStored(request.payload);
+        scope.postMessage({ id: request.id, value: bytes }, [bytes.buffer]);
+        return;
+      }
+      case 'renameNotebook':
+        value = workspace.catalog.rename(request.payload.id, request.payload.name);
+        if (workspace.current?.id === request.payload.id)
+          workspace.current = value as typeof workspace.current;
+        break;
+      case 'createNotebook':
+        value = initialized(await workspace.create(request.payload.name, request.payload.session));
+        break;
+      case 'switchNotebook':
+        value = initialized(workspace.switch(request.payload.id, request.payload.session));
+        break;
       case 'openEventStream': {
         const input = new sqlite.oo1.DB(':memory:');
         try {
@@ -129,13 +137,8 @@ async function handle(request: { id: number; method: string; payload: any }) {
           );
           for (const row of input.selectObjects('SELECT hash,data FROM blobs'))
             await verifyContent(String(row.hash), row.data as Uint8Array);
-          replaceNotebook(adapter(input), adapter(db));
-          const sessionId = journal.startSession(request.payload.session, 'notebook.open');
           value = {
-            mode: context.mode,
-            state: journal.state(),
-            sessionId,
-            storageError: context.storageError,
+            ...initialized(await workspace.create(request.payload.name, request.payload.session, input)),
             report,
           };
         } finally {
@@ -166,7 +169,13 @@ async function handle(request: { id: number; method: string; payload: any }) {
           );
           if (result) throw new Error('Could not read SQLite notebook');
           input.exec('PRAGMA trusted_schema=OFF');
-          validateNotebook(adapter(input), adapter(db));
+          const expected = new sqlite.oo1.DB(':memory:');
+          try {
+            expected.exec(schema);
+            validateNotebook(adapter(input), adapter(expected));
+          } finally {
+            expected.close();
+          }
           if (input.selectValue("SELECT count(*) FROM sqlite_schema WHERE type='table' AND name='blobs'"))
             for (const row of input.selectObjects(
               'SELECT b.hash,b.data,a.byte_length FROM blobs b JOIN asset_refs a USING(hash)',
@@ -176,14 +185,7 @@ async function handle(request: { id: number; method: string; payload: any }) {
                 throw new Error('Embedded resource length does not match metadata');
               await verifyContent(String(row.hash), blob);
             }
-          replaceNotebook(adapter(input), adapter(db));
-          const sessionId = journal.startSession(request.payload.session, 'notebook.open');
-          value = {
-            mode: context.mode,
-            state: journal.state(),
-            sessionId,
-            storageError: context.storageError,
-          };
+          value = initialized(await workspace.create(request.payload.name, request.payload.session, input));
         } finally {
           input.close();
           sqlite.wasm.dealloc(pointer);
@@ -313,9 +315,10 @@ async function handle(request: { id: number; method: string; payload: any }) {
       default:
         throw new Error('Unknown database operation');
     }
-    if (value && typeof value === 'object' && 'shapes' in value && Array.isArray(value.shapes))
+    if (value && typeof value === 'object' && 'shapes' in value && Array.isArray(value.shapes)) {
+      workspace.observe();
       value = encoder.encode(value as State);
-    else if (value && typeof value === 'object' && 'state' in value) {
+    } else if (value && typeof value === 'object' && 'state' in value) {
       const initialized = value as { state: State };
       initialized.state = encoder.encode(initialized.state) as unknown as State;
     }

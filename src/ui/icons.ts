@@ -9,3 +9,6 @@ export function outlineIcon(path: string): string {
 }
 export const undoIcon = outlineIcon('<path d="m9 14-5-5 5-5M4 9h10a6 6 0 0 1 6 6v3"/>');
 export const redoIcon = outlineIcon('<path d="m15 14 5-5-5-5M20 9H10a6 6 0 0 0-6 6v3"/>');
+export const notebooksIcon = outlineIcon(
+  '<rect x="6" y="3" width="14" height="18" rx="2"/><path d="M3 7h5M3 12h5M3 17h5M11 8h5M11 12h5"/>',
+);

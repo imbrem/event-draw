@@ -14,6 +14,7 @@ A research change to processing, exchange or UI should reuse the other boundarie
 | Processing | `ink.ts`, `plugins.ts`, `live-ink.ts` | Versioned smoothing/width/rejection and validated immutable outputs |
 | Interaction | `interactions.ts`, `geometry.ts`, `erasure.ts`, `live-eraser.ts` | Replaceable lasso/touch transforms, append-only erasing and capture adapter |
 | Persistence | `journal.ts`, `storage/*`, `schema.sql` | Transactions, immutable resources, append-only effects and projections |
+| Library | `storage/app-catalog.ts`, `storage/notebook-workspace.ts`, `ui/notebook-library.ts` | App/config catalog, separate notebook files and safe connection switching |
 | Identity | `storage/identity.ts`, `storage/events.ts` | Namespaces, logical clock, object registry and lifecycle events |
 | Exchange | `streams.ts`, `storage/event-stream.ts` | Framing, record bindings, transforms and reconstruction policy |
 | Materialization | `storage/record-materialization.ts`, `storage/snapshot.ts` | SQLite row dependencies/replay and reduced baselines |
@@ -27,6 +28,33 @@ schemas or exchange framing. `core.ts` builds a DOM-free JS library with TypeScr
 frontend rendering modules remain a separate browser layer.
 See [the current stack and portability boundaries](stack.md) for host dependencies,
 eraser performance measurements and a possible SQL analysis window.
+
+## Notebook library and app state
+
+```mermaid
+flowchart LR
+  UI[Notebook library] --> App[app.sqlite3: catalog + preferences + catalog events]
+  App --> A[Notebook A.sqlite3]
+  App --> B[Notebook B.sqlite3]
+  A --> NotesA[Documents / pages / notes / journal / blobs]
+  B --> NotesB[Documents / pages / notes / journal / blobs]
+```
+
+- `AppCatalog` is DOM-free and accepts the same `SqlDatabase` trait as `Journal`.
+  It has its own schema UUID + `0.0.0`, independent of the notebook schema.
+- `notebooks` maps local integer handles to files, notebook UUID, name and timestamps.
+  `catalog_events` records local add/import/adopt/rename/reset actions. `preferences`
+  stores app state such as the active handle and leaves room for future configuration.
+- `NotebookWorkspace` owns browser connections and grows the OPFS SAH pool on demand.
+  It initializes a candidate before activation, then closes the previous persistent connection.
+  Temporary mode retains separate in-memory connections for the session.
+- Notebook UUID/creation/edit metadata is observed from each notebook's own identity and
+  event journal. Opening/session events do not count as content edits. Local names remain
+  catalog preferences; they are not content events and are not in notebook JSONL exports.
+- Import always adds a copy, including snapshots sharing a UUID. Local handles scope recovery
+  and page position; global identity is preserved. There is no implicit merge or overwrite.
+- The original `/notes.sqlite3` is adopted without modifying its schema. `NotebookFiles`
+  coordinates draft flushing/recovery and editor replacement independently of library layout.
 
 ## Identity
 

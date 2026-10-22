@@ -233,3 +233,19 @@ pre { max-width: 100%; overflow: auto; font: 10px/1.5 ui-monospace, monospace; p
 .processor-menu > select { margin-top: 10px; max-width: 100%; }
 .inline-text-toolbar { position: absolute; top: -40px; left: 0; display: flex; gap: 4px; white-space: nowrap; z-index: 2; }
 .inline-text-toolbar select, .inline-text-toolbar button { font-size: 14px; min-height: 36px; padding: 5px 8px; }
+
+#show-notebooks { display: flex; align-items: center; gap: 6px; max-width: 170px; }
+#show-notebooks svg { width: 18px; height: 18px; flex: none; }
+#active-notebook-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#notebook-library { width: min(720px, 95vw); max-height: 88dvh; border: 1px solid #d9ded7; border-radius: 12px; background: #f7f7f2; color: #203b42; padding: 20px; }
+#notebook-library::backdrop { background: #203b4259; }
+#notebook-library header, #create-notebook-form, .notebook-entry > div { display: flex; gap: 8px; align-items: center; }
+#notebook-library header strong { margin-right: auto; }
+#notebook-library p { font-size: 12px; line-height: 1.6; }
+#create-notebook-form input, .notebook-entry input { flex: 1; }
+.notebook-entry { margin-top: 14px; padding: 14px; border: 1px solid #d9ded7; border-radius: 8px; background: #fffefa; }
+.notebook-entry dl { display: grid; grid-template-columns: max-content 1fr; gap: 5px 12px; font-size: 12px; }
+.notebook-entry dd { margin: 0; }
+@media(max-width: 650px) { #show-notebooks { max-width: 95px; } .notebook-entry { padding: 10px; } }
+
+@media(max-width: 480px) { #active-notebook-name { display: none; } }

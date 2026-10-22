@@ -1,3 +1,4 @@
+import { APP_SCHEMA_IDENTITY } from '../../src/storage/app-catalog.ts';
 import { SCHEMA_IDENTITY } from '../../src/storage/schema.ts';
 import type { InkData } from '../../src/model.ts';
 import type { Row } from '../../src/storage/sql.ts';
@@ -1007,13 +1008,15 @@ test('speed/pressure formulas are configurable in notebook and per-trace preview
   await expect(page.locator('.output-status')).toHaveText('Experimental preview · not saved');
 });
 
-test('notebook files reopen atomically, recovery restores replacement, and drawn export omits linked notes',async({page})=>{
+test('notebook imports preserve copies, scoped recovery restores snapshots, and drawn export omits linked notes',async({page})=>{
   const errors:string[]=[];page.on('pageerror',(e)=>errors.push(e.message));
   await page.goto('./');await stroke(page);await page.locator('#toggle-text').click();await page.locator('#add-linked-note').click();await page.locator('#text-source').fill('private provenance');await page.locator('#close-text').click();
   const path=await download(page,'#export-full'),bytes=readFileSync(path!);
   const drawn=await exported(page,'#export-drawn');try{expect(drawn.prepare('SELECT * FROM visible_shapes').all()).toHaveLength(1);expect(drawn.prepare('SELECT * FROM visible_objects').all()).toHaveLength(0);expect(drawn.prepare('SELECT * FROM app_events').all()).toHaveLength(1);}finally{drawn.close();}
   await menu(page);await page.locator('#new-notebook').click();await expect(page.locator('#counts')).toHaveText(/^0 visible · 0 raw strokes · \d+ events$/);
-  await menu(page);await page.locator('#restore-backup').click();await expect(page.locator('#counts')).toContainText('1 visible');
+  await page.locator('#show-notebooks').click();
+  await page.locator('.notebook-entry[data-notebook-id="1"]').getByRole('button',{name:'Open',exact:true}).click();
+  await menu(page);await page.locator('#restore-backup').click();await expect(page.locator('#notebook-name')).toHaveText(/^Recovered /);await expect(page.locator('#save-state')).toHaveText('Saved');await expect(page.locator('#counts')).toContainText('1 visible');
   await menu(page);await page.locator('#notebook-file').setInputFiles({name:'Saved.sqlite3',mimeType:'application/vnd.sqlite3',buffer:bytes});await expect(page.locator('#notebook-name')).toHaveText('Saved.sqlite3');await expect(page.locator('#counts')).toContainText('1 visible');
   await menu(page);await page.locator('#notebook-file').setInputFiles({name:'bad.sqlite3',mimeType:'application/vnd.sqlite3',buffer:Buffer.from('not a database')});await expect(page.locator('#notice')).toContainText('Choose a SQLite notebook');await expect(page.locator('#counts')).toContainText('1 visible');
   await menu(page,false);await stroke(page,[[100,250],[500,250]]);await expect(page.locator('#counts')).toContainText('2 visible');
@@ -1251,4 +1254,209 @@ test('on-page Markdown and plain text share drafts, direct manipulation, undo an
   await page.locator('#previous-page').click();
   await expect(page.locator('.page-object strong')).toHaveText('literal');
   expect(errors).toEqual([]);
+});
+
+async function createNotebook(page: Page, name: string) {
+  await page.locator('#show-notebooks').click();
+  await page.locator('#new-notebook-name').fill(name);
+  await page.locator('#create-notebook-form button').click();
+  await expect(page.locator('#notebook-library')).not.toBeVisible();
+  await expect(page.locator('#active-notebook-name')).toHaveText(name);
+  await expect(page.locator('#save-state')).toHaveText('Saved');
+}
+async function switchNotebook(page: Page, id: number) {
+  await page.locator('#show-notebooks').click();
+  await page.locator(`.notebook-entry[data-notebook-id="${id}"]`).getByRole('button', { name: 'Open', exact: true }).click();
+  await expect(page.locator('#notebook-library')).not.toBeVisible();
+  await expect(page.locator('#save-state')).toHaveText('Saved');
+}
+
+test('notebook library isolates databases, flushes drafts, preserves identities and restores each page position', async ({ page }) => {
+  await page.goto('./');
+  await stroke(page);
+  await menu(page);
+  await page.locator('#add-page').click();
+  await menu(page, false);
+  await stroke(page, [[120, 300], [400, 330]]);
+  await page.locator('#toggle-text').click();
+  await page.locator('#add-linked-note').click();
+  await page.locator('#text-source').fill('Only in notebook A, saved before switching.');
+  // No explicit Save: changing notebooks must drain pending drafts.
+  await createNotebook(page, 'Notebook B');
+  await expect(page.locator('#counts')).toHaveText(/^0 visible · 0 raw strokes · \d+ events$/);
+  await expect(page.locator('#page-number')).toHaveValue('1');
+  await expect(page.locator('#text-source')).toHaveValue('');
+  await page.locator('#toggle-text').click();
+  await stroke(page);
+  const b = await exported(page);
+  let uuidB: string;
+  try {
+    uuidB = String(b.prepare('SELECT uuid FROM notebook_imports WHERE id=(SELECT self_import_id FROM notebook_metadata)').get()!.uuid);
+    expect(b.prepare('SELECT count(*) AS n FROM current_pages').get()!.n).toBe(1);
+    expect(b.prepare('SELECT count(*) AS n FROM object_contents').get()!.n).toBe(0);
+    expect(b.prepare("SELECT count(*) AS n FROM sqlite_schema WHERE name='notebooks'").get()!.n).toBe(0);
+  } finally { b.close(); }
+  await page.locator('#show-notebooks').click();
+  await expect(page.locator('.notebook-entry')).toHaveCount(2);
+  const aRow = page.locator('.notebook-entry[data-notebook-id="1"]');
+  const uuidA = await aRow.getAttribute('data-uuid');
+  expect(uuidA).toMatch(/^[0-9a-f]{64}$/); expect(uuidA).not.toBe(uuidB!);
+  const createdA = await aRow.locator('time').first().getAttribute('datetime');
+  const editedA = await aRow.locator('time').last().getAttribute('datetime');
+  await aRow.getByRole('textbox', { name: 'Notebook name', exact: true }).fill('Math notebook');
+  await aRow.getByRole('button', { name: 'Rename', exact: true }).click();
+  await expect(aRow.getByRole('textbox', { name: 'Notebook name', exact: true })).toHaveValue('Math notebook');
+  await aRow.getByRole('button', { name: 'Open', exact: true }).click();
+  await expect(page.locator('#active-notebook-name')).toHaveText('Math notebook');
+  await expect(page.locator('#page-number')).toHaveValue('2');
+  await expect(page.locator('#counts')).toHaveText(/^1 visible · 2 raw strokes · \d+ events$/);
+  await page.locator('#toggle-text').click();
+  await expect(page.locator('#text-source')).toHaveValue('Only in notebook A, saved before switching.');
+  await page.locator('#close-text').click();
+  await page.reload();
+  await expect(page.locator('#active-notebook-name')).toHaveText('Math notebook');
+  await expect(page.locator('#page-number')).toHaveValue('2');
+  await page.locator('#show-notebooks').click();
+  await expect(aRow).toHaveAttribute('data-uuid', uuidA!);
+  await expect(aRow.locator('time').first()).toHaveAttribute('datetime', createdA!);
+  await expect(aRow.locator('time').last()).toHaveAttribute('datetime', editedA!);
+  await page.locator('#close-notebook-library').click();
+  await switchNotebook(page, 2);
+  await expect(page.locator('#page-number')).toHaveValue('1');
+  await expect(page.locator('#counts')).toHaveText(/^1 visible · 1 raw strokes · \d+ events$/);
+  await menu(page); await page.locator('.local-state').evaluate((e) => { (e as HTMLDetailsElement).open = true; });
+  page.once('dialog', (dialog) => dialog.accept());
+  await page.locator('#reset-settings').click();
+  await expect(page.locator('#counts')).toHaveText(/^0 visible · 0 raw strokes · \d+ events$/);
+  await switchNotebook(page, 1);
+  await expect(page.locator('#counts')).toHaveText(/^1 visible · 2 raw strokes · \d+ events$/);
+  const a = await exported(page);
+  try {
+    expect(a.prepare('SELECT count(*) AS n FROM stroke_events').get()!.n).toBe(2);
+    expect(a.prepare('SELECT count(*) AS n FROM object_contents').get()!.n).toBeGreaterThan(0);
+  } finally { a.close(); }
+});
+
+test('many notebooks grow the OPFS pool and remain independently reopenable', async ({ page }) => {
+  await page.goto('./'); await stroke(page);
+  for (let i = 2; i <= 8; i++) await createNotebook(page, 'Notebook ' + i);
+  await page.reload();
+  await expect(page.locator('#active-notebook-name')).toHaveText('Notebook 8');
+  await page.locator('#show-notebooks').click();
+  await expect(page.locator('.notebook-entry')).toHaveCount(8);
+  const uuids = await page.locator('.notebook-entry').evaluateAll((rows) => rows.map((r) => (r as HTMLElement).dataset.uuid));
+  expect(new Set(uuids).size).toBe(8);
+  await page.locator('#close-notebook-library').click();
+  await switchNotebook(page, 1);
+  await expect(page.locator('#counts')).toHaveText(/^1 visible · 1 raw strokes · \d+ events$/);
+});
+
+test('temporary storage keeps independent notebooks for the session', async ({ browser, browserName, baseURL }) => {
+  test.skip(browserName !== 'webkit', 'WebKit ephemeral contexts exercise the no-OPFS fallback');
+  const context = await browser.newContext({ baseURL, viewport: { width: 1100, height: 950 } });
+  try {
+    const page = await context.newPage();
+    await page.goto('./');
+    await expect(page.locator('#storage')).toHaveText('Session only · export to keep');
+    await stroke(page);
+    await createNotebook(page, 'Temporary second notebook');
+    await expect(page.locator('#counts')).toHaveText(/^0 visible · 0 raw strokes · \d+ events$/);
+    await switchNotebook(page, 1);
+    await expect(page.locator('#counts')).toHaveText(/^1 visible · 1 raw strokes · \d+ events$/);
+  } finally { await context.close(); }
+});
+
+test('legacy working file is adopted without changing identity, and incompatible copies remain exportable', async ({ page }) => {
+  await page.goto('./'); await stroke(page);
+  await page.locator('#show-notebooks').click();
+  const originalUuid = await page.locator('.notebook-entry').getAttribute('data-uuid');
+  const originalCreated = await page.locator('.notebook-entry time').first().getAttribute('datetime');
+  await page.locator('#close-notebook-library').click();
+  await page.route('**/__test_closed__', (route) => route.fulfill({ contentType: 'text/html', body: '<title>Closed</title>' }));
+  await page.goto('/__test_closed__');
+  await expect.poll(() => page.evaluate(async () => (await navigator.locks.query()).held?.length ?? 0)).toBe(0);
+  // Delete only the app/config file in this isolated test profile. The remaining
+  // original /notes.sqlite3 has exactly the pre-library layout on disk.
+  const removed = await page.evaluate(async (identity) => {
+    const root = await navigator.storage.getDirectory();
+    async function removeCatalog(directory: FileSystemDirectoryHandle): Promise<boolean> {
+      for await (const [name, entry] of directory as unknown as AsyncIterable<[string, FileSystemHandle]>) {
+        if (entry.kind === 'directory') { if (await removeCatalog(entry as FileSystemDirectoryHandle)) return true; }
+        else {
+          const text = new TextDecoder().decode(await (await (entry as FileSystemFileHandle).getFile()).arrayBuffer());
+          if (text.includes(identity)) { await directory.removeEntry(name); return true; }
+        }
+      }
+      return false;
+    }
+    return removeCatalog(await root.getDirectoryHandle('event-draw-v1'));
+  }, APP_SCHEMA_IDENTITY.uuid);
+  expect(removed).toBe(true);
+  await page.goto('./');
+  await expect(page.locator('#counts')).toHaveText(/^1 visible · 1 raw strokes · \d+ events$/);
+  await page.locator('#show-notebooks').click();
+  await expect(page.locator('.notebook-entry')).toHaveCount(1);
+  await expect(page.locator('.notebook-entry')).toHaveAttribute('data-uuid', originalUuid!);
+  await expect(page.locator('.notebook-entry time').first()).toHaveAttribute('datetime', originalCreated!);
+  await page.locator('#close-notebook-library').click();
+  // Corrupt only the schema identifier, leaving the immutable evidence intact.
+  await page.goto('/__test_closed__');
+  await expect.poll(() => page.evaluate(async () => (await navigator.locks.query()).held?.length ?? 0)).toBe(0);
+  await page.evaluate(async (uuid) => {
+    const root = await navigator.storage.getDirectory();
+    async function change(directory: FileSystemDirectoryHandle): Promise<boolean> {
+      for await (const [, entry] of directory as unknown as AsyncIterable<[string, FileSystemHandle]>) {
+        if (entry.kind === 'directory') { if (await change(entry as FileSystemDirectoryHandle)) return true; }
+        else {
+          const handle = entry as FileSystemFileHandle;
+          const bytes = new Uint8Array(await (await handle.getFile()).arrayBuffer());
+          const magic = new TextEncoder().encode(uuid);
+          for (let offset = 0; offset + magic.length <= bytes.length; offset++) {
+            if (!magic.every((byte, index) => bytes[offset + index] === byte)) continue;
+            bytes[offset] = '0'.charCodeAt(0);
+            const writer = await handle.createWritable(); await writer.write(bytes); await writer.close();
+            return true;
+          }
+        }
+      }
+      return false;
+    }
+    await change(await root.getDirectoryHandle('event-draw-v1'));
+  }, SCHEMA_IDENTITY.uuid);
+  await page.goto('./');
+  await expect(page.locator('#notice')).toContainText('Unsupported notebook schema');
+  await createNotebook(page, 'Compatible notebook');
+  await page.locator('#show-notebooks').click();
+  const old = page.locator('.notebook-entry[data-notebook-id="1"]');
+  const downloadPromise = page.waitForEvent('download');
+  await old.getByRole('button', { name: 'Save SQLite', exact: true }).click();
+  const db = new DatabaseSync((await (await downloadPromise).path())!);
+  try {
+    expect(db.prepare('SELECT count(*) AS n FROM stroke_events').get()!.n).toBe(1);
+    expect(db.prepare('SELECT uuid FROM schema_identity').get()!.uuid).toBe('0' + SCHEMA_IDENTITY.uuid.slice(1));
+  } finally { db.close(); }
+  await old.getByRole('button', { name: 'Open', exact: true }).click();
+  await expect(page.locator('#library-status')).toContainText('Unsupported notebook schema');
+  await page.locator('#close-notebook-library').click();
+  await expect(page.locator('#active-notebook-name')).toHaveText('Compatible notebook');
+  await expect(page.locator('#counts')).toHaveText(/^0 visible · 0 raw strokes · \d+ events$/);
+});
+
+test('library SQLite save flushes the active text draft and the mobile picker fits', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('./');
+  await expect(page.locator('#save-state')).toHaveText('Saved');
+  await page.locator('#toggle-text').click(); await page.locator('#add-linked-note').click();
+  await page.locator('#text-source').fill('Immediate library export includes this draft.');
+  await page.locator('#show-notebooks').click();
+  const downloadPromise = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Save SQLite', exact: true }).click();
+  const db = new DatabaseSync((await (await downloadPromise).path())!);
+  try {
+    expect(db.prepare('SELECT data_json FROM object_contents ORDER BY id DESC LIMIT 1').get()!.data_json)
+      .toContain('Immediate library export includes this draft.');
+  } finally { db.close(); }
+  await page.locator('#close-notebook-library').click();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
+  await expect(page.locator('#show-notebooks')).toBeInViewport();
 });

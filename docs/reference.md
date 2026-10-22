@@ -23,28 +23,41 @@ Plain LAN HTTP cannot provide browser filesystem storage; where supported,
 the app uses an explicitly labelled temporary database. Export before closing.
 The public deployment below provides a stable HTTPS origin.
 
-Each exported SQLite file is a notebook. The app autosaves one working copy in this browser
-profile and origin (including port). **Menu → Open notebook**, **New notebook**, and
-**Save notebook · full history** open/create/download portable files. Opening a file replaces
-the working copy; later edits do not automatically overwrite that original download. Notebook
-imports require the current schema, validate structure/integrity/geometry/content hashes, and
-replace saved state transactionally. A failed import preserves the working notebook.
+Each notebook has a separate SQLite file. **Notebooks** in the header opens a library with
+local name, 256-bit notebook UUID, original creation time and last content-edit time.
+Create a named notebook there, rename it, or open another; documents, pages and linked notes
+remain inside their notebook. Navigation is remembered separately for each local copy.
+Reopening records a session event but does not change the last-edit time. Each entry can
+also save its SQLite file without switching, including an incompatible older notebook.
 
-Before opening/creating a notebook, the app retains a recovery copy. It also keeps up to three
-idle snapshots, checked every minute; **Restore recovery copy** opens the latest. Recovery
-uses IndexedDB separately from the OPFS working copy; if recovery storage is unavailable when
-replacing a notebook, the previous notebook is downloaded instead. Browser-local copies can
-all be lost together; downloaded SQLite files are the portable backup.
+A separate `app.sqlite3` stores the catalog, local naming events and a preferences table,
+currently used for active selection. Notebook names are device-local; content and identity
+remain portable without the catalog. The previous `/notes.sqlite3` is adopted in place,
+without changing its UUID or the notebook schema. New notebooks use separate files in the
+same OPFS pool. The pool grows as files are added.
 
-The working notebook belongs to this browser profile and origin.
-One tab owns it at a time; another tab is blocked with instructions to close
-the owner and reload. Browser storage can be evicted; export files to keep them.
+**Menu → Import notebook**, **New notebook**, and **Save notebook · full history**
+import/create/download files. Imports require the current schema and validate structure,
+integrity, geometry and embedded content hashes. A successful import or JSONL reconstruction
+adds a separate copy; a failed import keeps the active notebook. Importing an older snapshot
+with the same UUID never overwrites a newer copy. Such copies share a global namespace but
+have distinct local handles; merging divergent copies is not implemented.
 
-**Menu → Local state → Reset local notebook** deletes local documents, PDFs,
-pages, captures and history after confirmation. An incompatible schema shows **Export existing
-SQLite** and **Reset local notebook** even when the notebook cannot initialize.
-There are no migrations or silent resets during this prototype's rapid iteration.
-Reset affects only this app's database at the current origin.
+Switching flushes text drafts and queued edits, backs up the outgoing notebook, then opens
+the destination. IndexedDB keeps up to three recovery snapshots **per local notebook**;
+an idle check also saves changed notebooks every minute. **Restore recovery copy** imports
+the active notebook's latest snapshot as another copy. Recovery failures do not remove the
+outgoing notebook from the library. Browser-local copies can all be lost together;
+downloaded SQLite files are the portable backup, and edits never rewrite previous downloads.
+
+The library belongs to this browser profile and origin (including port). One tab owns the
+OPFS pool at a time; another tab is blocked with close/reload instructions. If persistent
+storage is unavailable, the entire library is explicitly temporary for that session.
+
+**Menu → Local state → Reset local notebook** clears only the active file and assigns it a
+fresh identity after confirmation. Other notebooks and the app catalog remain. An incompatible
+notebook shows **Export existing SQLite** and **Reset local notebook**; the library can also
+open a different notebook. There are no notebook schema migrations or silent resets.
 
 ```sh
 pnpm build           # type check + static app and reusable core in dist/
@@ -72,7 +85,7 @@ SQLite file and use **Reset local notebook**; this prototype has no migrations.
 
 Notebooks and imported source files stay in that browser's local storage. Deployment
 does not add synchronization or upload notebooks to GitHub. To transfer work between
-devices, use **Save notebook · full history**, then **Menu → Open notebook** on the
+devices, use **Save notebook · full history**, then **Menu → Import notebook** on the
 other device. Embedded PDF/image/SVG blobs are included by default. Localhost and
 the Pages site have separate working copies.
 
@@ -713,7 +726,8 @@ path in the worker. No sensor samples are dropped. See [measurements and limits]
 | `ui/page-navigation.ts`, `ui/notebook-location.ts` | Numbered navigation and disposable location preference |
 | `ui/page-surface.ts`, `page-sources.ts` | Fit/pinch/layout and extensible cancellable background rendering |
 | `ui/page-browser.ts`, `ui/pdf-text.ts`, `pdf/export.ts` | Lazy grid/continuous reader, search/text selection and flattened export |
-| `ui/notebook-files.ts`, `ui/notebook-backups.ts`, `storage/notebooks.ts` | Portable files, recovery snapshots and validated atomic replacement |
+| `storage/app-catalog.ts`, `storage/notebook-workspace.ts`, `ui/notebook-library.ts` | Separate app/config DB, notebook connections and library view |
+| `ui/notebook-files.ts`, `ui/notebook-backups.ts`, `storage/notebooks.ts` | Portable imports, scoped recovery snapshots and validated copying |
 | `live-ink.ts`, `live-eraser.ts`, `spatial.ts`, `state-transport.ts` | Incremental previews, disposable ink index and worker deltas |
 | `pdf/source.ts`, `pdf/library.ts` | Content backend contract, URL reading, digest policy and PDF.js cache |
 | `storage/documents.ts` | Document name/content index and page topology transactions |
