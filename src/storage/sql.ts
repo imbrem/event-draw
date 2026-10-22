@@ -26,7 +26,7 @@ export function insertRow(db: SqlDatabase, table: string, row: Row): void {
     Object.keys(row).map(() => '?').join(',') + ')', Object.values(row));
 }
 export const VIEWER_TABLES = [
-  'app_events', 'app_event_shapes', 'shapes', 'styles', 'pages', 'capture_sessions',
+  'app_events', 'app_event_shapes', 'shapes', 'styles', 'documents', 'assets', 'pages', 'capture_sessions',
   'stroke_events', 'visible_shapes',
 ] as const;
 export type ViewerTable = typeof VIEWER_TABLES[number];

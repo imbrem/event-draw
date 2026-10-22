@@ -1,4 +1,4 @@
-import type { CaptureSession, Gesture, State } from './model.ts';
+import type { CaptureSession, Gesture, PdfImport, State } from './model.ts';
 import type { BrowseResult, Row, ViewerTable } from './storage/sql.ts';
 
 export type Initialized = {
@@ -40,9 +40,14 @@ export class DatabaseClient {
   init(session: CaptureSession) { return this.call<Initialized>('init', session); }
   reset(session: CaptureSession) { return this.call<Initialized>('reset', session); }
   gesture(gesture: Gesture, sessionId: number) { return this.call<State>('gesture', { gesture, sessionId }); }
-  addPage(title: string, width: number | null, height: number | null) {
-    return this.call<State>('addPage', { title, width, height });
+  addPage(documentId: number, afterPageId: number, width: number | null, height: number | null) {
+    return this.call<State>('addPage', { documentId, afterPageId, width, height });
   }
+  createDocument(name: string) { return this.call<State>('createDocument', name); }
+  renameDocument(id: number, name: string) { return this.call<State>('renameDocument', { id, name }); }
+  importPdf(input: PdfImport) { return this.call<State>('importPdf', input); }
+  read(hash: string) { return this.call<Uint8Array>('readPdf', hash); }
+  changePage(pageId: number, action: 'earlier' | 'later' | 'delete') { return this.call<State>('changePage', { pageId, action }); }
   undo(pageId: number) { return this.call<State>('undo', pageId); }
   clear(pageId: number) { return this.call<State>('clear', pageId); }
   deleteShapes(pageId: number, shapeIds: number[]) { return this.call<State>('deleteShapes', { pageId, shapeIds }); }

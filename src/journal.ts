@@ -1,8 +1,9 @@
 import {
-  localize, measuredSamples, type CaptureSession, type Gesture, type Page,
+  localize, measuredSamples, type CaptureSession, type Gesture, type PdfImport,
   type State, type Style, type VisibleShape,
 } from './model.ts';
 import { gestureDelta, lassoShapes, planErasure } from './geometry.ts';
+import { DocumentStore } from './storage/documents.ts';
 import {
   insertRow, scalar, transaction, VIEWER_TABLES,
   type BrowseResult, type Row, type SqlDatabase, type ViewerTable,
@@ -10,7 +11,7 @@ import {
 export type { Row, SqlDatabase, SqlValue } from './storage/sql.ts';
 
 interface EventOptions {
-  pageId?: number; rawId?: number; tool?: string; styleId?: number;
+  documentId?: number; pageId?: number; rawId?: number; tool?: string; styleId?: number;
   radius?: number; undoable?: boolean; undoOf?: number; data?: unknown;
 }
 interface Placement {
@@ -21,7 +22,13 @@ interface Placement {
 /** Semantic operations are atomic and append-only; raw captures never change. */
 export class Journal {
   private db: SqlDatabase;
-  constructor(db: SqlDatabase) { this.db = db; }
+  private documents: DocumentStore;
+  constructor(db: SqlDatabase) {
+    this.db = db;
+    this.documents = new DocumentStore(db, (kind, documentId, pageId, data) => {
+      this.event(kind, { documentId, pageId, data });
+    });
+  }
   private lastId(): number { return scalar(this.db, 'SELECT last_insert_rowid()'); }
 
   startSession(session: CaptureSession): number {
@@ -34,7 +41,7 @@ export class Journal {
   }
   private event(kind: string, options: EventOptions = {}): number {
     insertRow(this.db, 'app_events', {
-      occurred_at: new Date().toISOString(), kind, page_id: options.pageId ?? null,
+      occurred_at: new Date().toISOString(), kind, document_id: options.documentId ?? null, page_id: options.pageId ?? null,
       raw_stroke_id: options.rawId ?? null, tool: options.tool ?? null,
       style_id: options.styleId ?? null, eraser_radius: options.radius ?? null,
       undoable: options.undoable ? 1 : 0, undo_of_event_id: options.undoOf ?? null,
@@ -59,16 +66,19 @@ export class Journal {
       offset_x: shape.offset_x, offset_y: shape.offset_y, paint_order: shape.paint_order,
     });
   }
-  addPage(title: string, width: number | null, height: number | null): State {
-    return transaction(this.db, () => {
-      insertRow(this.db, 'pages', { title, kind: width === null ? 'whiteboard' : 'page', width, height });
-      const pageId = this.lastId();
-      this.event('page.add', { pageId });
-      return this.state();
-    });
+  addPage(documentId: number, afterPageId: number, width: number | null, height: number | null): State {
+    this.documents.addPage(documentId, afterPageId, width, height); return this.state();
+  }
+  createDocument(name: string): State { this.documents.create(name); return this.state(); }
+  renameDocument(id: number, name: string): State { this.documents.rename(id, name); return this.state(); }
+  importPdf(input: PdfImport): State { this.documents.importPdf(input); return this.state(); }
+  readPdf(hash: string): Uint8Array { return this.documents.read(hash); }
+  changePage(pageId: number, action: 'earlier' | 'later' | 'delete'): State {
+    this.documents.changePage(pageId, action); return this.state();
   }
   gesture(input: Gesture, sessionId: number): State {
     return transaction(this.db, () => {
+      if (!this.documents.pages().some((p) => p.id === input.pageId)) throw new Error('Page does not exist');
       const { data, origin } = localize(input.data);
       insertRow(this.db, 'stroke_events', {
         capture_session_id: sessionId, data_version: 1, data_json: JSON.stringify(data),
@@ -172,7 +182,7 @@ export class Journal {
   }
   state(): State {
     return {
-      pages: this.db.all('SELECT * FROM pages ORDER BY id') as unknown as Page[],
+      documents: this.documents.all(), pages: this.documents.pages(),
       shapes: this.visible(),
       rawCount: scalar(this.db, 'SELECT count(*) FROM stroke_events'),
       eventCount: scalar(this.db, 'SELECT count(*) FROM app_events'),
@@ -184,9 +194,10 @@ export class Journal {
     if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
       throw new Error('Invalid pagination');
     }
-    const order = table === 'app_event_shapes' ? 'app_event_id DESC, shape_id' : 'id DESC';
+    const order = table === 'app_event_shapes' ? 'app_event_id DESC, shape_id' : table === 'assets' ? 'hash' : 'id DESC';
+    const columns = table === 'assets' ? 'hash, media_type, byte_length' : '*';
     return { table, offset, total: scalar(this.db, 'SELECT count(*) FROM ' + table),
-      rows: this.db.all('SELECT * FROM ' + table + ' ORDER BY ' + order + ' LIMIT ? OFFSET ?', [limit, offset]) };
+      rows: this.db.all('SELECT ' + columns + ' FROM ' + table + ' ORDER BY ' + order + ' LIMIT ? OFFSET ?', [limit, offset]) };
   }
   related(eventId: number): Row[] {
     return this.db.all(`
@@ -198,6 +209,9 @@ export class Journal {
   snapshotInto(target: SqlDatabase): void {
     transaction(target, () => {
       target.exec('DELETE FROM pages');
+      target.exec('DELETE FROM documents');
+      for (const row of this.db.all('SELECT * FROM assets')) insertRow(target, 'assets', row);
+      for (const row of this.db.all('SELECT * FROM documents ORDER BY id')) insertRow(target, 'documents', row);
       for (const row of this.db.all('SELECT * FROM pages ORDER BY id')) insertRow(target, 'pages', row);
       const queries: [string, string][] = [
         ['capture_sessions', `SELECT DISTINCT c.* FROM capture_sessions c JOIN stroke_events r

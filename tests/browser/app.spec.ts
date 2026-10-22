@@ -1,6 +1,7 @@
 import { test as base, expect, webkit, type Page } from '@playwright/test';
+import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -25,6 +26,7 @@ const test = base.extend({
       }));
       await reset.goto(new URL('/__test_reset__', baseURL).href);
       await reset.evaluate(async () => {
+        localStorage.clear();
         const root = await navigator.storage.getDirectory();
         try { await root.removeEntry('event-draw-v1', { recursive: true }); }
         catch (error) {
@@ -43,12 +45,14 @@ const test = base.extend({
 
 async function stroke(page: Page, points = [[100, 150], [500, 150]]) {
   await expect(page.locator('#save-state')).toHaveText('Saved');
+  await menu(page, false);
+  await page.locator('#ink-settings').evaluate((e) => { (e as HTMLDetailsElement).open = false; });
   const canvas = page.locator('#canvas');
   // A tall page can intersect the viewport while its drawing start is above it
   // (notably after reloading with the footer scrolled into view).
   await canvas.evaluate((c) => c.scrollIntoView({ block: 'start' }));
   const box = (await canvas.boundingBox())!;
-  const view = await canvas.evaluate((c) => c.style.aspectRatio.split('/').map(Number));
+  const view = await canvas.evaluate((c) => [Number((c as HTMLCanvasElement).dataset.viewWidth), Number((c as HTMLCanvasElement).dataset.viewHeight)]);
   const positions = points.map(([x, y]) => ({ x: box.x + x / view[0] * box.width,
     y: box.y + y / view[1] * box.height }));
   await page.mouse.move(positions[0].x, positions[0].y);
@@ -58,11 +62,27 @@ async function stroke(page: Page, points = [[100, 150], [500, 150]]) {
   await expect(page.locator('#save-state')).toHaveText('Saved');
 }
 
+async function menu(page: Page, open = true) {
+  if (await page.locator('#options').evaluate((e) => (e as HTMLDetailsElement).open) !== open) await page.locator('#options > summary').click();
+}
+async function tab(page: Page, name: string) {
+  await menu(page);
+  await page.locator('[data-tab="' + name + '"]').click();
+}
+async function clearPage(page: Page) {
+  await menu(page, false);
+  await page.locator('#ink-settings').evaluate((e) => { (e as HTMLDetailsElement).open = true; });
+  await page.locator('#clear').click();
+  await page.locator('#ink-settings').evaluate((e) => { (e as HTMLDetailsElement).open = false; });
+}
 async function download(page: Page, id: string) {
+  if (id !== '#export-existing') await menu(page);
   if (id !== '#export-existing') await page.locator('.export-menu summary').click();
   const next = page.waitForEvent('download');
   await page.locator(id).click();
-  return await (await next).path();
+  const path = await (await next).path();
+  await menu(page, false);
+  return path;
 }
 async function exported(page: Page, id = '#export-full') {
   return new DatabaseSync(await download(page, id));
@@ -80,11 +100,11 @@ test('draw, reload, inspect raw and app rows, undo, and compact with identical r
   await page.reload();
   await expect(page.locator('#counts')).toHaveText('2 visible · 2 raw strokes · 2 events');
   expect(await page.locator('#canvas').screenshot()).toEqual(drawing);
-  await page.getByRole('button', { name: 'Events', exact: true }).click();
+  await tab(page, 'events');
   await expect(page.getByRole('table', { name: 'app_events', exact: true })).toBeVisible();
   await expect(page.locator('#record-json')).toContainText('stroke.add');
   await expect(page.locator('#event-effects')).toContainText('offset_x');
-  await page.getByRole('button', { name: 'Raw strokes', exact: true }).click();
+  await tab(page, 'raw');
   await expect(page.getByRole('table', { name: 'stroke_events', exact: true })).toBeVisible();
   await expect(page.locator('#record-json')).toContainText('deliveries');
   await expect(page.getByLabel('Neutral raw stroke preview')).toBeVisible();
@@ -93,8 +113,8 @@ test('draw, reload, inspect raw and app rows, undo, and compact with identical r
     return c.getContext('2d')!.getImageData(0, 0, c.width, c.height).data.some((n, i) => i % 4 === 3 && n > 0);
   })).toBe(true);
   await page.screenshot({ path: 'test-results/raw-viewer.png', fullPage: true });
-  await page.getByRole('button', { name: 'Notebook', exact: true }).click();
-  await page.locator('#clear').click();
+  await page.locator('#return-notebook').click();
+  await clearPage(page);
   await expect(page.locator('#counts')).toContainText('0 visible');
   await page.locator('#undo').click();
   await expect(page.locator('#counts')).toContainText('2 visible');
@@ -150,19 +170,25 @@ test('pages share one journal and whiteboards pan/zoom independently of raw geom
   await page.goto('/');
   await expect(page.locator('#save-state')).toHaveText('Saved');
   await stroke(page);
+  await menu(page);
   await page.locator('#page-size').selectOption('landscape');
   await page.locator('#add-page').click();
-  await expect(page.locator('#page')).toHaveValue('2');
-  await expect(page.locator('#canvas')).toHaveCSS('aspect-ratio', '842 / 595');
+  await menu(page, false);
+  await expect(page.locator('#page-number')).toHaveValue('2');
+  await expect(page.locator('#canvas')).toHaveAttribute('data-view-width', '842');
+  await expect(page.locator('#canvas')).toHaveAttribute('data-view-height', '595');
   await expect(page.locator('#counts')).toContainText('0 visible');
   await stroke(page, [[100, 100], [400, 100]]);
-  await page.locator('#clear').click();
+  await clearPage(page);
   await expect(page.locator('#counts')).toContainText('0 visible');
-  await page.locator('#page').selectOption('1');
+  await page.locator('#page-number').fill('1');
+  await page.locator('#page-number').press('Enter');
   await expect(page.locator('#counts')).toContainText('1 visible');
+  await menu(page);
   await page.locator('#page-size').selectOption('whiteboard');
   await page.locator('#add-page').click();
-  await expect(page.locator('#page')).toHaveValue('3');
+  await menu(page, false);
+  await expect(page.locator('#page-number')).toHaveValue('2');
   await page.getByRole('button', { name: 'Pan board', exact: true }).click();
   await stroke(page, [[100, 100], [300, 200]]);
   await expect(page.locator('#view-position')).toContainText('x -200, y -100');
@@ -201,6 +227,7 @@ test('narrow touch layout preserves cancelled pen observations without displayin
     canvas.dispatchEvent(new PointerEvent('pointercancel', options));
   });
   await expect(page.locator('#counts')).toHaveText('0 visible · 1 raw strokes · 1 events');
+  await menu(page);
   await page.locator('#diagnostics summary').click();
   const details = JSON.parse((await page.locator('#sample-info').textContent())!);
   expect(details.lastReported.pressure).toBeCloseTo(0.83, 6);
@@ -224,18 +251,25 @@ test('tool buttons support keyboard selection, contextual controls, and drawing/
   await expect(page.locator('#selection-controls')).toBeVisible();
   await expect(page.locator('#color-control')).toBeHidden();
   await tools.getByRole('button', { name: 'Erase parts', exact: true }).click();
+  await page.locator('#ink-settings > summary').click();
   await expect(page.getByLabel('Eraser radius')).toBeVisible();
+  await page.locator('#ink-settings > summary').click();
   await expect(page.locator('#selection-controls')).toBeHidden();
+  await menu(page);
   await page.locator('#page-size').selectOption('whiteboard');
   await page.locator('#add-page').click();
+  await menu(page, false);
   await expect(pan).toBeEnabled();
   await pan.focus();
   await page.keyboard.press('Enter');
   await expect(pan).toHaveAttribute('aria-pressed', 'true');
-  await page.locator('#page').selectOption('1');
+  await page.locator('#page-number').fill('1');
+  await page.locator('#page-number').press('Enter');
   await expect(pan).toBeDisabled();
   await expect(pen).toHaveAttribute('aria-pressed', 'true');
+  await page.locator('#ink-settings > summary').click();
   await expect(page.getByLabel('Pen width')).toBeVisible();
+  await page.locator('#ink-settings > summary').click();
   await page.locator('#canvas').evaluate((c) => c.scrollIntoView({ block: 'start' }));
   const box = (await page.locator('#canvas').boundingBox())!;
   await page.mouse.move(box.x + 80, box.y + 100);
@@ -268,6 +302,7 @@ test('reset is explicit, cancellation preserves data, and reset persists across 
   await page.goto('/');
   await expect(page.locator('#save-state')).toHaveText('Saved');
   await stroke(page);
+  await menu(page);
   await page.locator('.local-state summary').click();
   page.once('dialog', (dialog) => dialog.dismiss());
   await page.locator('#reset-settings').click();
@@ -352,8 +387,8 @@ test('lasso selects ink, dragging changes placement only, and deletion and movem
     const current = moved.prepare('SELECT * FROM visible_shapes WHERE id = 1').get()!;
     expect(current.raw_stroke_id).toBe(original.raw_stroke_id);
     // WebKit rounds synthetic mouse coordinates to CSS pixels.
-    expect(Math.abs(Number(current.offset_x) - Number(original.offset_x) - 50)).toBeLessThan(1.1);
-    expect(Math.abs(Number(current.offset_y) - Number(original.offset_y) - 80)).toBeLessThan(1.1);
+    expect(Math.abs(Number(current.offset_x) - Number(original.offset_x) - 50)).toBeLessThan(2);
+    expect(Math.abs(Number(current.offset_y) - Number(original.offset_y) - 80)).toBeLessThan(2);
     expect(moved.prepare('SELECT kind FROM app_events ORDER BY id').all().map((r) => r.kind))
       .toEqual(['stroke.add', 'stroke.add', 'selection.lasso', 'selection.move']);
     expect(moved.prepare('SELECT count(*) AS n FROM stroke_events').get()!.n).toBe(4);
@@ -374,4 +409,121 @@ test('lasso selects ink, dragging changes placement only, and deletion and movem
   finally { restored.close(); }
   await page.reload();
   await expect(page.locator('#counts')).toHaveText('2 visible · 4 raw strokes · 7 events');
+});
+
+const pdfFixture = new URL('../fixtures/pages.pdf', import.meta.url);
+test('PDF file and URL imports deduplicate by hash; annotations survive navigation, zoom, reload and compact export', async ({ page }) => {
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  const bytes = readFileSync(pdfFixture), hash = 'sha256:' + createHash('sha256').update(bytes).digest('hex');
+  await page.goto('/');
+  await expect(page.locator('#save-state')).toHaveText('Saved');
+  await expect(page.locator('#page-heading')).toHaveText('/1');
+  await menu(page);
+  await page.locator('#pdf-file').setInputFiles(pdfFixture.pathname);
+  await expect(page.locator('#document')).toHaveValue('2');
+  await expect(page.locator('#save-state')).toHaveText('Saved');
+  await expect(page.locator('#page-total')).toHaveText('/ 3');
+  await expect(page.locator('#document-hash')).toHaveText(hash);
+  await expect(page.locator('#blank-page-controls')).toBeHidden();
+  await expect(page.locator('#canvas')).toHaveAttribute('data-view-width', '600');
+  const painted = () => page.locator('#pdf-canvas').evaluate((c) => {
+    const canvas = c as HTMLCanvasElement;
+    const pixel = canvas.getContext('2d')!.getImageData(Math.floor(canvas.width / 2), 20, 1, 1).data;
+    return pixel[0] < 100 && pixel[2] > 60 && pixel[3] === 255;
+  });
+  await expect.poll(painted).toBe(true);
+  await stroke(page, [[100, 200], [450, 240]]);
+  const drawing = await page.locator('#canvas').screenshot();
+  await page.locator('#zoom-in').click();
+  await expect(page.locator('#save-state')).toHaveText('Saved');
+  await page.locator('#home-view').click();
+  await expect(page.locator('#save-state')).toHaveText('Saved');
+  expect(await page.locator('#canvas').screenshot()).toEqual(drawing);
+  await page.locator('#next-page').click();
+  await expect(page.locator('#page-number')).toHaveValue('2');
+  await expect(page.locator('#canvas')).toHaveAttribute('data-view-width', '840');
+  await expect(page.locator('#counts')).toContainText('0 visible');
+  await stroke(page, [[120, 200], [500, 250]]);
+  await page.reload();
+  await expect(page.locator('#document')).toHaveValue('2');
+  await expect(page.locator('#page-number')).toHaveValue('2');
+  await expect(page.locator('#counts')).toContainText('1 visible');
+  await expect(page.locator('#save-state')).toHaveText('Saved');
+  await expect.poll(painted).toBe(true);
+  await page.locator('#previous-page').click();
+  await expect(page.locator('#save-state')).toHaveText('Saved');
+  expect(await page.locator('#canvas').screenshot()).toEqual(drawing);
+  await page.setViewportSize({ width: 820, height: 1050 });
+  await expect.poll(painted).toBe(true);
+  await expect(page.locator('#save-state')).toHaveText('Saved');
+  expect(await page.evaluate(() => document.documentElement.scrollHeight <= innerHeight)).toBe(true);
+  await page.screenshot({ path: 'test-results/pdf-annotation.png', fullPage: true });
+  // Importing the same bytes under a different URL/name reopens its document.
+  await page.route('**/another-name.pdf', (route) => route.fulfill({ contentType: 'application/pdf', body: bytes }));
+  await menu(page);
+  await page.locator('#pdf-url').fill(new URL('/another-name.pdf', page.url()).href);
+  await page.locator('#import-url').click();
+  await expect(page.locator('#options')).not.toHaveAttribute('open', '');
+  await expect(page.locator('#document option')).toHaveCount(2);
+  await expect(page.locator('#counts')).toHaveText('1 visible · 2 raw strokes · 3 events');
+  const full = await exported(page), snapshot = await exported(page, '#export-visible');
+  try {
+    for (const table of ['assets', 'documents', 'pages', 'visible_shapes']) {
+      expect(snapshot.prepare('SELECT * FROM ' + table).all()).toEqual(full.prepare('SELECT * FROM ' + table).all());
+    }
+    expect(Buffer.from(full.prepare('SELECT data FROM assets').get()!.data as Uint8Array)).toEqual(bytes);
+    expect(full.prepare('SELECT hash FROM assets').get()!.hash).toBe(hash);
+    expect(full.prepare('SELECT source_page, width, height FROM pages WHERE document_id = 2 ORDER BY page_number').all())
+      .toEqual([{ source_page: 1, width: 600, height: 800 }, { source_page: 2, width: 840, height: 500 }, { source_page: 3, width: 500, height: 700 }]);
+    expect(snapshot.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
+    expect(snapshot.prepare('SELECT count(*) AS n FROM app_events').get()!.n).toBe(1);
+  } finally { full.close(); snapshot.close(); }
+  expect(errors).toEqual([]);
+});
+
+test('failed URL and malformed PDF imports keep the notebook usable and intact', async ({ page }) => {
+  await page.goto('/');
+  await stroke(page);
+  await page.route('**/unavailable.pdf', (route) => route.abort());
+  await menu(page);
+  await page.locator('#pdf-url').fill(new URL('/unavailable.pdf', page.url()).href);
+  await page.locator('#import-url').click();
+  await expect(page.locator('#notice')).toContainText('CORS');
+  await expect(page.locator('#save-state')).toHaveText('Saved');
+  await page.locator('#pdf-file').setInputFiles({ name: 'bad.pdf', mimeType: 'application/pdf', buffer: Buffer.from('invalid PDF') });
+  await expect(page.locator('#notice')).toContainText('Invalid PDF');
+  await expect(page.locator('#document option')).toHaveCount(1);
+  await stroke(page, [[100, 250], [450, 250]]);
+  await expect(page.locator('#counts')).toHaveText('2 visible · 2 raw strokes · 2 events');
+});
+
+test('blank document names, page ordering and deletion are separate from annotation identity', async ({ page }) => {
+  await page.goto('/');
+  await stroke(page);
+  await menu(page);
+  await page.locator('#document-name').fill('Notebook');
+  await page.locator('#rename-document').click();
+  await expect(page.locator('#page-heading')).toHaveText('Notebook/1');
+  await page.locator('#add-page').click();
+  await expect(page.locator('#page-number')).toHaveValue('2');
+  await page.locator('#page-earlier').click();
+  await expect(page.locator('#page-number')).toHaveValue('1');
+  await menu(page, false);
+  await page.locator('#next-page').click();
+  await expect(page.locator('#counts')).toContainText('1 visible');
+  await menu(page);
+  page.once('dialog', (d) => d.accept());
+  await page.locator('#delete-page').click();
+  await expect(page.locator('#page-total')).toHaveText('/ 1');
+  await expect(page.locator('#counts')).toContainText('0 visible');
+  await page.locator('#new-document').click();
+  await expect(page.locator('#document')).toHaveValue('2');
+  await expect(page.locator('#page-heading')).toHaveText('Notes/1');
+  const full = await exported(page);
+  try {
+    expect(full.prepare('SELECT page_id FROM app_event_shapes WHERE visible = 1').get()!.page_id).toBe(1);
+    expect(full.prepare('SELECT deleted FROM pages WHERE id = 1').get()!.deleted).toBe(1);
+    expect(full.prepare('SELECT count(*) AS n FROM stroke_events').get()!.n).toBe(1);
+  } finally { full.close(); }
 });

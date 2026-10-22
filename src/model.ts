@@ -26,7 +26,11 @@ export interface Delivery {
 }
 export interface InkData { deliveries: Delivery[] }
 export interface ViewBox extends Point { width: number; height: number }
-export type Page = { id: number; title: string } & (
+export type ContentId = string;
+export interface Document { id: number; name: string; pdf_hash: ContentId | null }
+export interface PdfPageSize { width: number; height: number }
+export interface PdfImport { hash: ContentId; name: string; bytes: Uint8Array; pages: PdfPageSize[] }
+export type Page = { id: number; document_id: number; page_number: number; source_page: number | null; deleted: number } & (
   { kind: 'page'; width: number; height: number } |
   { kind: 'whiteboard'; width: null; height: null }
 );
@@ -58,6 +62,7 @@ export interface CaptureSession {
   capabilities: Record<string, unknown>;
 }
 export interface State {
+  documents: Document[];
   pages: Page[];
   shapes: VisibleShape[];
   rawCount: number;
@@ -65,7 +70,7 @@ export interface State {
   undoablePages: number[];
 }
 export const EMPTY_STATE: State = {
-  pages: [], shapes: [], rawCount: 0, eventCount: 0, undoablePages: [],
+  documents: [], pages: [], shapes: [], rawCount: 0, eventCount: 0, undoablePages: [],
 };
 export type Range = [number, number];
 

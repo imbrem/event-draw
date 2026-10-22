@@ -46,7 +46,7 @@ test('partial eraser creates ranges of the original capture and undo restores it
 test('whole-stroke erasing detects sparse crossings and is isolated to its page', () => {
   const d = database();
   try {
-    d.journal.addPage('Landscape', 842, 595);
+    d.journal.addPage(1, 1, 842, 595);
     d.journal.gesture(gesture([[0, 50], [100, 50]]), d.sessionId);
     d.journal.gesture(gesture([[0, 50], [100, 50]], 'pen', 2), d.sessionId);
     d.journal.gesture(gesture([[50, 0], [50, 100]], 'erase-strokes'), d.sessionId);
@@ -79,7 +79,7 @@ test('cancelled inputs preserve captures but do not edit visible shapes or undo 
 test('snapshot preserves pages, raw dependencies, fragments, style and placement with less history', () => {
   const source = database(), target = database();
   try {
-    source.journal.addPage('Board', null, null);
+    source.journal.addPage(1, 1, null, null);
     source.journal.gesture(gesture([[0, 50], [100, 50]]), source.sessionId);
     source.journal.gesture(gesture([[50, 0], [50, 100]], 'erase-parts'), source.sessionId);
     source.journal.gesture(gesture([[-200, -100], [400, 200]], 'pen', 2), source.sessionId);
@@ -126,7 +126,7 @@ test('database viewer is read only and restricts table names and pagination', ()
 test('lasso records references, move preserves raw identity, and delete/undo are page-local', () => {
   const d = database();
   try {
-    d.journal.addPage('Other', 400, 400);
+    d.journal.addPage(1, 1, 400, 400);
     d.journal.gesture(gesture([[0, 50], [100, 50]]), d.sessionId);
     d.journal.gesture(gesture([[10, 80]]), d.sessionId);
     d.journal.gesture(gesture([[0, 50], [100, 50]], 'pen', 2), d.sessionId);

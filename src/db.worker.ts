@@ -5,6 +5,7 @@ import { Journal } from './journal.ts';
 import { initializeSchema, resetSchema } from './storage/schema.ts';
 import type { BrowseResult, Row, SqlDatabase, ViewerTable } from './storage/sql.ts';
 import type { CaptureSession, Gesture } from './model.ts';
+import { verifyPdf } from './pdf/source.ts';
 
 const scope = self as unknown as DedicatedWorkerGlobalScope;
 function adapter(db: Database): SqlDatabase {
@@ -76,9 +77,16 @@ scope.onmessage = async ({ data: request }) => {
       case 'gesture':
         value = journal.gesture(request.payload.gesture as Gesture, request.payload.sessionId); break;
       case 'addPage': {
-        const { title, width, height } = request.payload;
-        value = journal.addPage(title, width, height); break;
+        const { documentId, afterPageId, width, height } = request.payload;
+        value = journal.addPage(documentId, afterPageId, width, height); break;
       }
+      case 'createDocument': value = journal.createDocument(request.payload); break;
+      case 'renameDocument': value = journal.renameDocument(request.payload.id, request.payload.name); break;
+      case 'changePage': value = journal.changePage(request.payload.pageId, request.payload.action); break;
+      case 'importPdf':
+        await verifyPdf(request.payload.hash, request.payload.bytes);
+        value = journal.importPdf(request.payload); break;
+      case 'readPdf': value = journal.readPdf(request.payload); break;
       case 'clear': value = journal.clear(request.payload); break;
       case 'deleteShapes': value = journal.deleteShapes(request.payload.pageId, request.payload.shapeIds); break;
       case 'undo': value = journal.undo(request.payload); break;

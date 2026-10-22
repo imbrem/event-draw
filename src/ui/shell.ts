@@ -1,78 +1,80 @@
 import { PAGE_PRESETS } from '../pages.ts';
 
 export function element<T extends HTMLElement = HTMLElement>(id: string): T {
-  return document.getElementById(id) as T;
+  const value = document.getElementById(id);
+  if (!value) throw new Error('Missing UI element: ' + id);
+  return value as T;
 }
 export function mountShell() {
   element('app').innerHTML = `
-  <header>
-    <div class="brand"><span class="mark" aria-hidden="true">e.</span><div>
-      <h1>Event Draw</h1><p>A page to think on.</p>
-    </div></div>
-    <span id="storage" class="storage" role="status">Opening notebook…</span>
+  <header class="app-bar">
+    <span class="mark" aria-label="Event Draw">e.</span>
+    <select id="document" aria-label="Document"></select>
+    <nav id="page-navigation" aria-label="Page navigation"></nav>
+    <span id="save-state" role="status">Opening…</span>
+    <button id="return-notebook" hidden>Notebook</button>
+    <details id="options" class="options-menu"><summary>Menu</summary>
+      <div class="options-panel">
+        <nav class="tabs" aria-label="Views">
+          <button data-tab="notebook" aria-pressed="true">Notebook</button>
+          <button data-tab="events" aria-pressed="false">Events</button>
+          <button data-tab="raw" aria-pressed="false">Raw strokes</button>
+        </nav>
+        <section aria-label="Documents"><h2>Document</h2>
+          <label>Name <input id="document-name" aria-label="Document name" placeholder="Blank notes"></label>
+          <button id="rename-document">Rename</button><button id="new-document">New blank document</button>
+          <label class="file-button">Open PDF <input id="pdf-file" type="file" accept="application/pdf,.pdf"></label>
+          <form id="pdf-url-form"><label>PDF URL <input id="pdf-url" type="url" required placeholder="https://…"></label>
+            <button id="import-url" type="submit">Import URL</button></form>
+          <p id="document-hash" class="content-id"></p>
+        </section>
+        <section id="blank-page-controls" aria-label="Blank pages"><h2>Pages</h2>
+          <label>New page <select id="page-size" aria-label="New page size">
+            ${PAGE_PRESETS.map((p) => '<option value="' + p.id + '">' + p.label + '</option>').join('')}
+          </select></label><button id="add-page">Insert page after this one</button>
+          <div class="row"><button id="page-earlier">Move earlier</button><button id="page-later">Move later</button></div>
+          <button id="delete-page">Delete page</button>
+        </section>
+        <section><h2>Export & local state</h2>
+          <details class="export-menu"><summary>Export SQLite ↓</summary><div class="export-options">
+            <button id="export-full">Full history</button><button id="export-visible">Visible state only</button>
+            <p>Includes PDFs and every document. Visible state drops earlier edits.</p>
+          </div></details>
+          <p id="storage" role="status">Opening notebook…</p>
+          <p id="counts"></p><p id="page-heading"></p>
+          <details id="diagnostics"><summary>Capture details</summary>
+            <p>Pressure and contact size may be browser defaults.</p><pre id="sample-info">Draw a stroke to inspect its input.</pre>
+          </details>
+          <details class="local-state"><summary>Local state</summary><button id="reset-settings">Reset local notebook</button></details>
+        </section>
+      </div>
+    </details>
   </header>
+  <div id="notice" role="status" hidden></div>
+  <div id="recovery-actions" hidden><button id="export-existing">Export existing SQLite</button><button id="reset-local">Reset local notebook</button></div>
+  <button id="recover" hidden>Export unsaved gestures (JSON)</button>
   <main>
-    <nav class="tabs" aria-label="Views">
-      <button data-tab="notebook" aria-pressed="true">Notebook</button>
-      <button data-tab="events" aria-pressed="false">Events</button>
-      <button data-tab="raw" aria-pressed="false">Raw strokes</button>
-    </nav>
-    <div id="notice" role="status" hidden></div>
-    <div id="recovery-actions" hidden>
-      <button id="export-existing">Export existing SQLite</button>
-      <button id="reset-local">Reset local notebook</button>
-    </div>
-    <button id="recover" hidden>Export unsaved gestures (JSON)</button>
     <section id="notebook-panel">
-      <section class="page-tools" aria-label="Pages">
-        <label>Page <select id="page" aria-label="Current page"></select></label>
-        <label>New page <select id="page-size" aria-label="New page size">
-          ${PAGE_PRESETS.map((p) => '<option value="' + p.id + '">' + p.label + '</option>').join('')}
-        </select></label>
-        <button id="add-page" disabled>Add page</button>
-      </section>
-      <section class="toolbar" aria-label="Drawing tools">
+      <div id="page-viewport" class="page-viewport"><div class="page-frame">
+        <div id="paper" class="paper"><canvas id="pdf-canvas" aria-label="PDF page background" hidden></canvas><canvas id="canvas" aria-label="Drawing page"></canvas></div>
+      </div></div>
+      <div class="ink-dock" aria-label="Drawing tools">
         <div id="tool-picker" class="tool-picker" role="group" aria-label="Tools"></div>
-        <div class="tools">
+        <button id="undo" disabled>Undo</button>
+        <details id="ink-settings"><summary>Ink & actions</summary><div class="ink-settings-panel">
           <label id="color-control">Ink <input id="color" type="color" value="#203b42" aria-label="Ink color"></label>
           <label id="width-control">Width <input id="width" type="range" min="1" max="12" value="3" aria-label="Pen width"></label>
           <label id="eraser-control" hidden>Size <input id="radius" type="range" min="3" max="50" value="12" aria-label="Eraser radius"></label>
-          <label class="touch-label"><input id="touch" type="checkbox" checked> Finger drawing</label>
-        </div>
-        <div class="actions">
-          <button id="undo" disabled>Undo</button><button id="clear" disabled>Clear page</button>
-          <details class="export-menu"><summary>Export SQLite <span aria-hidden="true">↓</span></summary>
-            <div class="export-options">
-              <button id="export-full" disabled>Full history</button>
-              <button id="export-visible" disabled>Visible state only</button>
-              <p>Visible state keeps every page and drops earlier edits.</p>
-            </div>
-          </details>
-        </div>
-      </section>
+          <label><input id="touch" type="checkbox" checked> Finger drawing</label>
+          <button id="clear">Clear page</button>
+        </div></details>
+        <div class="zoom-controls"><button id="zoom-out" aria-label="Zoom out">−</button><button id="zoom-in" aria-label="Zoom in">+</button><button id="home-view">Fit page</button></div>
+      </div>
       <div id="selection-controls" class="selection-controls" hidden>
-        <span id="selection-count">0 selected</span>
-        <button id="delete-selection" disabled>Delete selected</button>
-        <button id="deselect" disabled>Deselect</button>
-        <span>Loop around ink to select it. Drag inside the selection to move it.</span>
+        <span id="selection-count">0 selected</span><button id="delete-selection">Delete selected</button><button id="deselect">Deselect</button>
+        <span>Loop to select. Drag inside the selection to move.</span>
       </div>
-      <div id="board-controls" class="board-controls" hidden>
-        <span>Drag with Pan to explore the board.</span>
-        <button id="zoom-out" aria-label="Zoom out">−</button>
-        <button id="zoom-in" aria-label="Zoom in">+</button>
-        <button id="home-view">Reset view</button><span id="view-position"></span>
-      </div>
-      <div class="page-heading"><span id="page-heading">UNTITLED / 01</span><span id="save-state" role="status">Loading</span></div>
-      <div class="paper"><canvas id="canvas" aria-label="Drawing page"></canvas></div>
-      <footer><span id="counts">Loading</span>
-        <details id="diagnostics"><summary>Capture details</summary>
-          <p>Pressure and contact size may be browser defaults. Hardware measurement support is unknown.</p>
-          <pre id="sample-info">Draw a stroke to inspect its input.</pre>
-        </details>
-        <details class="local-state"><summary>Local state</summary>
-          <button id="reset-settings">Reset local notebook</button>
-        </details>
-      </footer>
+      <div id="board-controls" hidden><span id="view-position"></span></div>
     </section>
     <section id="viewer-panel" hidden></section>
   </main>`;

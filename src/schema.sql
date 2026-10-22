@@ -1,16 +1,36 @@
 PRAGMA foreign_keys = ON;
-PRAGMA user_version = 2;
+PRAGMA user_version = 3;
+
+-- Content IDs are opaque to readers. The current importer emits sha256:<hex>.
+CREATE TABLE IF NOT EXISTS assets (
+  hash TEXT PRIMARY KEY,
+  media_type TEXT NOT NULL,
+  byte_length INTEGER NOT NULL CHECK (byte_length > 0),
+  data BLOB NOT NULL CHECK (length(data) = byte_length)
+) STRICT;
+
+-- Human names are an index over document identity, separate from page identity.
+CREATE TABLE IF NOT EXISTS documents (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE CHECK (instr(name, '/') = 0),
+  pdf_hash TEXT UNIQUE REFERENCES assets(hash)
+) STRICT;
+INSERT OR IGNORE INTO documents VALUES (1, '', NULL);
 
 CREATE TABLE IF NOT EXISTS pages (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  title TEXT NOT NULL,
+  document_id INTEGER NOT NULL REFERENCES documents(id),
+  page_number INTEGER NOT NULL CHECK (page_number > 0),
+  source_page INTEGER CHECK (source_page > 0),
+  deleted INTEGER NOT NULL DEFAULT 0 CHECK (deleted IN (0, 1)),
   kind TEXT NOT NULL CHECK (kind IN ('page', 'whiteboard')),
   width REAL,
   height REAL,
   CHECK ((kind = 'page' AND width IS NOT NULL AND height IS NOT NULL AND width > 0 AND height > 0)
-      OR (kind = 'whiteboard' AND width IS NULL AND height IS NULL))
+      OR (kind = 'whiteboard' AND width IS NULL AND height IS NULL AND source_page IS NULL))
 ) STRICT;
-INSERT OR IGNORE INTO pages VALUES (1, 'Untitled', 'page', 1000.0, 1200.0);
+CREATE INDEX IF NOT EXISTS document_page_order ON pages(document_id, deleted, page_number);
+INSERT OR IGNORE INTO pages VALUES (1, 1, 1, NULL, 0, 'page', 1000.0, 1200.0);
 
 CREATE TABLE IF NOT EXISTS capture_sessions (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -50,6 +70,7 @@ CREATE TABLE IF NOT EXISTS app_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   occurred_at TEXT NOT NULL,
   kind TEXT NOT NULL,
+  document_id INTEGER REFERENCES documents(id),
   page_id INTEGER REFERENCES pages(id),
   raw_stroke_id INTEGER REFERENCES stroke_events(id),
   tool TEXT,
@@ -93,4 +114,5 @@ FROM latest_shape_states e
 JOIN shapes s ON s.id = e.shape_id
 JOIN stroke_events r ON r.id = s.raw_stroke_id
 JOIN styles t ON t.id = e.style_id
-WHERE e.visible = 1;
+JOIN pages p ON p.id = e.page_id
+WHERE e.visible = 1 AND p.deleted = 0;

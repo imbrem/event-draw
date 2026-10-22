@@ -15,7 +15,8 @@
     "compact": "node --disable-warning=ExperimentalWarning scripts/compact.ts"
   },
   "dependencies": {
-    "@sqlite.org/sqlite-wasm": "3.54.1-build1"
+    "@sqlite.org/sqlite-wasm": "3.54.1-build1",
+    "pdfjs-dist": "^6.4.299"
   },
   "devDependencies": {
     "@playwright/test": "^1.64.1",
