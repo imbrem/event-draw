@@ -1,7 +1,5 @@
 import type { CaptureSession, Delivery, Sample, ViewBox } from './model.ts';
-
-export const PAGE_WIDTH = 1000;
-export const PAGE_HEIGHT = 1200;
+import { DEFAULT_PAGE_VIEW } from './pages.ts';
 
 export function captureSession(): CaptureSession {
   return {
@@ -29,7 +27,7 @@ export function captureSession(): CaptureSession {
 
 /** Snapshot mutable/native-backed events before returning from the callback. */
 export function captureDelivery(event: PointerEvent, canvas: HTMLCanvasElement,
-  view: ViewBox = { x: 0, y: 0, width: PAGE_WIDTH, height: PAGE_HEIGHT }): Delivery {
+  view: ViewBox = DEFAULT_PAGE_VIEW): Delivery {
   const receivedAt = performance.now();
   const rect = canvas.getBoundingClientRect();
   const scaleX = view.width / rect.width;

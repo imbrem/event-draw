@@ -6,7 +6,7 @@ export interface CanvasOptions {
   canStart(): boolean;
   touchEnabled(): boolean;
   tool(): Tool;
-  gesture(): Gesture;
+  gesture(tool: Gesture['tool']): Gesture;
   view(): ViewBox;
   scene(): Omit<Scene, 'active' | 'hover'>;
   onGesture(gesture: Gesture): void;
@@ -51,10 +51,11 @@ export class NotebookCanvas {
   private start(event: PointerEvent) {
     if (!this.options.canStart() || this.active || this.pan || event.button !== 0) return;
     if (event.pointerType === 'touch' && !this.options.touchEnabled()) return;
-    if (this.options.tool() === 'pan') {
+    const tool = this.options.tool();
+    if (tool === 'pan') {
       this.pan = { id: event.pointerId, x: event.clientX, y: event.clientY, view: { ...this.options.view() } };
     } else {
-      const gesture = this.options.gesture();
+      const gesture = this.options.gesture(tool);
       const targets = gesture.tool === 'lasso' ? this.options.moveTargets(this.position(event)) : [];
       if (targets.length) { gesture.tool = 'move-selection'; gesture.shapeIds = targets; }
       this.active = { id: event.pointerId, gesture };

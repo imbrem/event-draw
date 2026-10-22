@@ -2,10 +2,12 @@ import { captureSession } from './capture.ts';
 import { DatabaseClient, type Initialized } from './database.ts';
 import { download } from './download.ts';
 import { lassoShapes, selectionBounds } from './geometry.ts';
-import { EMPTY_STATE, measuredSamples, type Gesture, type Page, type State, type Tool, type ViewBox } from './model.ts';
+import { EMPTY_STATE, measuredSamples, type Gesture, type Page, type State } from './model.ts';
+import { PAGE_PRESETS, PageViews } from './pages.ts';
 import { NotebookCanvas } from './ui/canvas.ts';
 import { mountShell, element } from './ui/shell.ts';
 import { DatabaseViewer } from './ui/viewer.ts';
+import { ToolPicker } from './ui/tool-picker.ts';
 
 export function startApp(): () => void {
   mountShell();
@@ -18,32 +20,27 @@ export function startApp(): () => void {
   let pending: Gesture[] = [], unsaved: Gesture[] = [];
   let selected = new Set<number>();
   let operations: Promise<void> = Promise.resolve();
-  const views = new Map<number, ViewBox>();
+  const views = new PageViews();
   const canvas = element<HTMLCanvasElement>('canvas');
-  const tool = element<HTMLSelectElement>('tool');
+  const tools = new ToolPicker(element('tool-picker'), () => { selected.clear(); refresh(); });
   const pageSelect = element<HTMLSelectElement>('page');
   const notice = element('notice');
   const viewer = new DatabaseViewer(element('viewer-panel'), db);
   const page = (): Page | undefined => state.pages.find((p) => p.id === pageId);
   const shapes = () => state.shapes.filter((s) => s.page_id === pageId);
-  const view = (): ViewBox => {
-    const current = page();
-    return current?.kind === 'whiteboard' ? views.get(pageId) ??
-      { x: 0, y: 0, width: 1000, height: 750 } :
-      { x: 0, y: 0, width: current?.width ?? 1000, height: current?.height ?? 1200 };
-  };
-  const gesture = (): Gesture => ({
-    pageId, tool: tool.value as Gesture['tool'],
+  const view = () => views.get(page());
+  const gesture = (tool: Gesture['tool']): Gesture => ({
+    pageId, tool,
     style: { color: element<HTMLInputElement>('color').value,
       lineWidth: Number(element<HTMLInputElement>('width').value) },
     radius: Number(element<HTMLInputElement>('radius').value), cancelled: false, data: { deliveries: [] },
   });
   const notebook = new NotebookCanvas(canvas, {
-    canStart: () => ready && !failed && !resetting && (tool.value === 'pen' || writes === 0),
+    canStart: () => ready && !failed && !resetting && (tools.value === 'pen' || writes === 0),
     touchEnabled: () => element<HTMLInputElement>('touch').checked,
-    tool: () => tool.value as Tool, gesture, view,
+    tool: () => tools.value, gesture, view,
     scene: () => ({ shapes: shapes(), pending: pending.filter((g) => g.pageId === pageId),
-      view: view(), tool: tool.value, selected: [...selected],
+      view: view(), tool: tools.value, selected: [...selected],
       radius: Number(element<HTMLInputElement>('radius').value) }),
     moveTargets(point) {
       const bounds = selectionBounds(shapes().filter((s) => selected.has(s.id)));
@@ -52,7 +49,7 @@ export function startApp(): () => void {
         point.y >= bounds.y - pad && point.y <= bounds.y + bounds.height + pad ? [...selected] : [];
     },
     onActive(value) { active = value; refresh(); },
-    onPan(value) { views.set(pageId, value); refresh(); },
+    onPan(value) { views.pan(page()!, value); refresh(); },
     onGesture(input) {
       unsaved.push(input);
       if (!input.cancelled) pending.push(input);
@@ -79,7 +76,9 @@ export function startApp(): () => void {
     const visibleIds = new Set(shapes().map((s) => s.id));
     selected = new Set([...selected].filter((id) => visibleIds.has(id)));
     const busy = !ready || failed || active || writes > 0 || resetting;
-    for (const id of ['page', 'page-size', 'add-page', 'tool', 'color', 'width', 'radius', 'touch',
+    const board = page()?.kind === 'whiteboard';
+    tools.update({ disabled: busy, whiteboard: board });
+    for (const id of ['page', 'page-size', 'add-page', 'color', 'width', 'radius', 'touch',
       'zoom-in', 'zoom-out', 'home-view']) {
       (element(id) as HTMLInputElement | HTMLButtonElement | HTMLSelectElement).disabled = busy;
     }
@@ -88,7 +87,7 @@ export function startApp(): () => void {
     for (const id of ['delete-selection', 'deselect']) {
       element<HTMLButtonElement>(id).disabled = busy || !selected.size;
     }
-    element('selection-controls').hidden = tool.value !== 'lasso';
+    element('selection-controls').hidden = tools.value !== 'lasso';
     element('selection-count').textContent = selected.size + ' selected';
     element<HTMLButtonElement>('export-full').disabled = !ready || active || writes > 0;
     element<HTMLButtonElement>('export-visible').disabled = !ready || active || writes > 0 || failed;
@@ -102,14 +101,10 @@ export function startApp(): () => void {
       !ready ? 'Not open' : active ? 'Drawing' : writes ? 'Saving…' : 'Saved';
     pageSelect.replaceChildren(...state.pages.map((p) => new Option(p.title, String(p.id), false, p.id === pageId)));
     element('page-heading').textContent = (page()?.title ?? 'Untitled').toUpperCase() + ' / ' + pageId;
-    const board = page()?.kind === 'whiteboard';
     element('board-controls').hidden = !board;
-    const panOption = tool.querySelector<HTMLOptionElement>('option[value="pan"]')!;
-    panOption.disabled = !board;
-    if (!board && tool.value === 'pan') tool.value = 'pen';
-    element('color-control').hidden = tool.value !== 'pen';
-    element('width-control').hidden = tool.value !== 'pen';
-    element('eraser-control').hidden = !tool.value.startsWith('erase');
+    element('color-control').hidden = tools.value !== 'pen';
+    element('width-control').hidden = tools.value !== 'pen';
+    element('eraser-control').hidden = !tools.value.startsWith('erase');
     const box = view();
     canvas.style.aspectRatio = box.width + ' / ' + box.height;
     canvas.parentElement!.classList.toggle('whiteboard', board);
@@ -180,17 +175,12 @@ export function startApp(): () => void {
     button.onclick = () => setTab(button.dataset.tab!);
   });
   pageSelect.onchange = () => { selected.clear(); pageId = Number(pageSelect.value); refresh(); };
-  tool.onchange = () => { selected.clear(); refresh(); };
   element('undo').onclick = () => edit(() => db.undo(pageId));
   element('clear').onclick = () => edit(() => db.clear(pageId));
   element('delete-selection').onclick = () => edit(() => db.deleteShapes(pageId, [...selected]), () => selected.clear());
   element('deselect').onclick = () => { selected.clear(); refresh(); };
   element('add-page').onclick = () => {
-    const sizes: Record<string, [number | null, number | null, string]> = {
-      a4: [595, 842, 'A4'], letter: [612, 792, 'Letter'], landscape: [842, 595, 'Landscape'],
-      square: [1000, 1000, 'Square'], whiteboard: [null, null, 'Whiteboard'],
-    };
-    const [width, height, name] = sizes[element<HTMLSelectElement>('page-size').value];
+    const { width, height, name } = PAGE_PRESETS.find((p) => p.id === element<HTMLSelectElement>('page-size').value)!;
     edit(() => db.addPage(name + ' ' + (state.pages.length + 1), width, height),
       () => { selected.clear(); pageId = state.pages.at(-1)!.id; });
   };
@@ -209,16 +199,12 @@ export function startApp(): () => void {
   element('recover').onclick = () => download(JSON.stringify({ session, gestures: unsaved }, null, 2),
     'application/json', 'event-draw-unsaved.json');
   function zoom(factor: number) {
-    const current = view();
-    if (current.width * factor < 50 || current.width * factor > 1e7) return;
-    views.set(pageId, { x: current.x + current.width * (1 - factor) / 2,
-      y: current.y + current.height * (1 - factor) / 2,
-      width: current.width * factor, height: current.height * factor });
+    views.zoom(page()!, factor);
     refresh();
   }
   element('zoom-in').onclick = () => zoom(0.8);
   element('zoom-out').onclick = () => zoom(1.25);
-  element('home-view').onclick = () => { views.delete(pageId); refresh(); };
+  element('home-view').onclick = () => { views.reset(pageId); refresh(); };
   const unload = (event: BeforeUnloadEvent) => {
     if (active || writes || unsaved.length) event.preventDefault();
   };

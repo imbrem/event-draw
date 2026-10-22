@@ -26,10 +26,10 @@ export interface Delivery {
 }
 export interface InkData { deliveries: Delivery[] }
 export interface ViewBox extends Point { width: number; height: number }
-export interface Page {
-  id: number; title: string; kind: 'page' | 'whiteboard';
-  width: number | null; height: number | null;
-}
+export type Page = { id: number; title: string } & (
+  { kind: 'page'; width: number; height: number } |
+  { kind: 'whiteboard'; width: null; height: null }
+);
 export interface Style { color: string; lineWidth: number }
 export type Tool = 'pen' | 'erase-parts' | 'erase-strokes' | 'lasso' | 'pan';
 export interface Gesture {

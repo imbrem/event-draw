@@ -126,7 +126,7 @@ test('both erasers split or delete geometry and undo restores original raw refer
   await page.goto('/');
   await expect(page.locator('#save-state')).toHaveText('Saved');
   await stroke(page);
-  await page.locator('#tool').selectOption('erase-parts');
+  await page.getByRole('button', { name: 'Erase parts', exact: true }).click();
   await stroke(page, [[300, 120], [300, 180]]);
   await expect(page.locator('#counts')).toHaveText('2 visible · 2 raw strokes · 2 events');
   const split = await exported(page);
@@ -139,7 +139,7 @@ test('both erasers split or delete geometry and undo restores original raw refer
   } finally { split.close(); }
   await page.locator('#undo').click();
   await expect(page.locator('#counts')).toContainText('1 visible');
-  await page.locator('#tool').selectOption('erase-strokes');
+  await page.getByRole('button', { name: 'Erase whole strokes', exact: true }).click();
   await stroke(page, [[300, 120], [300, 180]]);
   await expect(page.locator('#counts')).toHaveText('0 visible · 3 raw strokes · 4 events');
   await page.locator('#undo').click();
@@ -163,12 +163,12 @@ test('pages share one journal and whiteboards pan/zoom independently of raw geom
   await page.locator('#page-size').selectOption('whiteboard');
   await page.locator('#add-page').click();
   await expect(page.locator('#page')).toHaveValue('3');
-  await page.locator('#tool').selectOption('pan');
+  await page.getByRole('button', { name: 'Pan board', exact: true }).click();
   await stroke(page, [[100, 100], [300, 200]]);
   await expect(page.locator('#view-position')).toContainText('x -200, y -100');
   await page.locator('#zoom-in').click();
   await expect(page.locator('#view-position')).toContainText('125%');
-  await page.locator('#tool').selectOption('pen');
+  await page.getByRole('button', { name: 'Pen', exact: true }).click();
   await stroke(page);
   const full = await exported(page), snapshot = await exported(page, '#export-visible');
   try {
@@ -184,6 +184,12 @@ test('narrow touch layout preserves cancelled pen observations without displayin
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/');
   await expect(page.locator('#save-state')).toHaveText('Saved');
+  const tools = page.getByRole('group', { name: 'Tools', exact: true });
+  await expect(tools.getByRole('button')).toHaveCount(5);
+  for (const button of await tools.getByRole('button').all()) {
+    expect((await button.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  }
+  await page.screenshot({ path: 'test-results/tool-buttons-mobile.png', fullPage: true });
   await page.locator('#canvas').evaluate((canvas) => {
     canvas.setPointerCapture = () => {};
     const rect = canvas.getBoundingClientRect();
@@ -202,6 +208,47 @@ test('narrow touch layout preserves cancelled pen observations without displayin
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
 
+test('tool buttons support keyboard selection, contextual controls, and drawing/page constraints', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.locator('#save-state')).toHaveText('Saved');
+  const tools = page.getByRole('group', { name: 'Tools', exact: true });
+  const pen = tools.getByRole('button', { name: 'Pen', exact: true });
+  const lasso = tools.getByRole('button', { name: 'Lasso select', exact: true });
+  const pan = tools.getByRole('button', { name: 'Pan board', exact: true });
+  await expect(pen).toHaveAttribute('aria-pressed', 'true');
+  await expect(pan).toBeDisabled();
+  await lasso.focus();
+  await page.keyboard.press('Space');
+  await expect(lasso).toHaveAttribute('aria-pressed', 'true');
+  await expect(pen).toHaveAttribute('aria-pressed', 'false');
+  await expect(page.locator('#selection-controls')).toBeVisible();
+  await expect(page.locator('#color-control')).toBeHidden();
+  await tools.getByRole('button', { name: 'Erase parts', exact: true }).click();
+  await expect(page.getByLabel('Eraser radius')).toBeVisible();
+  await expect(page.locator('#selection-controls')).toBeHidden();
+  await page.locator('#page-size').selectOption('whiteboard');
+  await page.locator('#add-page').click();
+  await expect(pan).toBeEnabled();
+  await pan.focus();
+  await page.keyboard.press('Enter');
+  await expect(pan).toHaveAttribute('aria-pressed', 'true');
+  await page.locator('#page').selectOption('1');
+  await expect(pan).toBeDisabled();
+  await expect(pen).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByLabel('Pen width')).toBeVisible();
+  await page.locator('#canvas').evaluate((c) => c.scrollIntoView({ block: 'start' }));
+  const box = (await page.locator('#canvas').boundingBox())!;
+  await page.mouse.move(box.x + 80, box.y + 100);
+  await page.mouse.down();
+  for (const button of await tools.getByRole('button').all()) await expect(button).toBeDisabled();
+  await page.mouse.move(box.x + 120, box.y + 120);
+  await page.mouse.up();
+  await expect(page.locator('#save-state')).toHaveText('Saved');
+  await expect(pen).toBeEnabled();
+  await expect(pan).toBeDisabled();
+  await expect(page.locator('#counts')).toContainText('1 visible');
+});
+
 test('a second tab is blocked rather than silently drawing into an unrelated database', async ({ page }) => {
   await page.goto('/');
   await expect(page.locator('#storage')).toHaveText('Stored on this device');
@@ -209,7 +256,7 @@ test('a second tab is blocked rather than silently drawing into an unrelated dat
   await other.goto('/');
   await expect(other.locator('#storage')).toHaveText('Open in another tab');
   await expect(other.locator('#notice')).toContainText('Close that tab');
-  await expect(other.locator('#tool')).toBeDisabled();
+  await expect(other.getByRole('button', { name: 'Pen', exact: true })).toBeDisabled();
   await expect(other.locator('#reset-settings')).toBeDisabled();
   await page.close();
   await other.reload();
@@ -294,7 +341,7 @@ test('lasso selects ink, dragging changes placement only, and deletion and movem
   const raw = before.prepare('SELECT * FROM stroke_events ORDER BY id').all();
   const original = before.prepare('SELECT * FROM visible_shapes WHERE id = 1').get()!;
   before.close();
-  await page.locator('#tool').selectOption('lasso');
+  await page.getByRole('button', { name: 'Lasso select', exact: true }).click();
   await stroke(page, [[250, 120], [350, 120], [350, 180], [250, 180], [250, 120]]);
   await expect(page.locator('#selection-count')).toHaveText('1 selected');
   await stroke(page, [[300, 150], [350, 230]]);

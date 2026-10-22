@@ -13,16 +13,19 @@ h1 { font-size: 19px; letter-spacing: -.5px; margin: 0; font-weight: 700; }
 .storage.temporary::before { background: #c2774d; }
 main { max-width: 1036px; margin: auto; padding: 0 24px 32px; }
 .toolbar { background: #fffefa; border: 1px solid #dedfd7; padding: 10px 12px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; border-radius: 9px; }
-.tools, .actions { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+.tools, .actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 label { font-size: 12px; display: flex; align-items: center; gap: 7px; white-space: nowrap; }
-.tools { gap: 18px; }
 input[type=color] { padding: 0; width: 25px; height: 25px; border: 0; background: none; cursor: pointer; }
 input[type=range] { width: 72px; accent-color: #325c5b; }
 input[type=checkbox] { accent-color: #325c5b; }
 button, .export-menu summary { border: 1px solid #d9ded7; color: #29494d; background: transparent; border-radius: 5px; padding: 8px 11px; cursor: pointer; font-size: 12px; min-height: 36px; }
 button:hover:enabled { background: #edf1eb; }
 button:disabled { opacity: .4; cursor: default; }
-button:focus-visible, summary:focus-visible, input:focus-visible { outline: 2px solid #c2774d; outline-offset: 3px; }
+button:focus-visible, summary:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid #c2774d; outline-offset: 3px; }
+.tool-picker { display: flex; flex-wrap: wrap; gap: 6px; width: 100%; padding-bottom: 10px; border-bottom: 1px solid #e7e8df; }
+.tool-picker button { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; padding: 9px 14px; border-color: transparent; }
+.tool-picker svg { width: 21px; height: 21px; flex-shrink: 0; }
+.tool-picker button[aria-pressed=true] { background: #e1e9e2; border-color: #b6c9bd; color: #203b42; box-shadow: inset 0 -2px #325c5b; }
 .export-menu { position: relative; }
 .export-menu summary { background: #29494d; color: white; border-color: #29494d; list-style: none; display: flex; gap: 14px; align-items: center; }
 .export-menu summary::-webkit-details-marker { display: none; }
@@ -40,24 +43,12 @@ footer { display: flex; align-items: flex-start; justify-content: space-between;
 #diagnostics summary { cursor: pointer; text-align: right; }
 #diagnostics p { max-width: 300px; line-height: 1.6; }
 pre { max-width: 100%; overflow: auto; font-size: 10px; line-height: 1.5; padding: 10px; background: #e9eae4; border-radius: 4px; }
-@media (max-width: 640px) {
-  header { padding: 23px 18px; }
-  main { padding: 0 12px 20px; }
-  .toolbar { gap: 8px; padding: 10px; }
-  .tools { gap: 12px; }
-  .touch-label { font-size: 11px; }
-  .actions { width: 100%; }
-  .export-menu { margin-left: auto; }
-  .storage { max-width: 130px; text-align: right; font-size: 10px; }
-}
-
 [hidden] { display: none !important; }
 select { font: inherit; color: inherit; background: #fffefa; border: 1px solid #d9ded7; border-radius: 5px; padding: 7px; max-width: 100%; }
 .tabs { display: flex; gap: 6px; margin-bottom: 18px; border-bottom: 1px solid #dedfd7; padding-bottom: 12px; }
 .tabs button { border-color: transparent; color: #71817c; }
 .tabs button[aria-pressed=true] { background: #e1e9e2; color: #203b42; }
 .page-tools, .board-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 12px 0; font-size: 12px; }
-.toolbar .tools { gap: 12px; }
 .board-controls { color: #71817c; }
 .selection-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 12px 0; color: #637c7b; font-size: 12px; }
 .whiteboard { background-color: white; background-image: radial-gradient(#c7d3cb 1px, transparent 1px); background-size: 20px 20px; }
@@ -78,4 +69,16 @@ tbody tr:hover, tbody tr.selected { background: #e8eee8; }
 .raw-preview { width: 240px; max-width: 100%; aspect-ratio: 1; background: white; border: 1px solid #dedfd7; }
 .local-state summary { cursor: pointer; }
 .local-state button { display: block; margin-top: 10px; }
-@media (max-width: 640px) { .page-tools { gap: 8px; } .toolbar .tools { gap: 10px; } .toolbar { align-items: flex-start; } }
+@media (max-width: 640px) {
+  header { padding: 23px 18px; }
+  main { padding: 0 12px 20px; }
+  .toolbar { align-items: flex-start; gap: 10px; padding: 10px; }
+  .tool-picker { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 3px; }
+  .tool-picker button { flex-direction: column; gap: 6px; padding: 7px 2px; font-size: 10px; min-height: 64px; }
+  .tools { gap: 10px; }
+  .page-tools { gap: 8px; }
+  .touch-label { font-size: 11px; }
+  .actions { width: 100%; gap: 9px; }
+  .export-menu { margin-left: auto; }
+  .storage { max-width: 130px; text-align: right; font-size: 10px; }
+}

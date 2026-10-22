@@ -45,6 +45,10 @@ needed for this VFS. Runtime assets are served locally; no CDN is needed.
 
 ## Notebook and database viewers
 
+The tool buttons show the active tool and can be activated with a click,
+tap, Space or Enter. Pan is available only on whiteboards. Tool changes are
+disabled during contact and while an edit is being saved.
+
 - **Pen** draws constant-width ink while retaining reported pressure and angles.
 - **Erase parts** cuts paths geometrically, including crossings between samples.
 - **Erase whole strokes** removes each visible shape touched by the eraser.
@@ -155,6 +159,13 @@ can be inspected and processed with ordinary SQLite tools.
 
 ## Capture behavior and limits
 
+The browser supplies **Pointer Events**, not complete stroke objects. The
+capture adapter snapshots their relevant fields into plain JSON, retaining
+each delivered event and separate coalesced/predicted batches. It also adds
+receipt time and derived local coordinates/transforms; original browser
+coordinates and pen measurements remain as reported. This is a structured
+capture of browser observations, not a verbatim serialization of DOM objects.
+
 - Snapshot values immediately in each callback. Preserve delivered events and
   separate coalesced/predicted lists, plus raw updates when the browser emits them.
 - Render raw-update observations when present; otherwise render coalesced
@@ -175,6 +186,18 @@ can be inspected and processed with ordinary SQLite tools.
   visible shape change. Unsupported raw data versions remain stored but are
   skipped by this renderer.
 
+To render a saved stroke, the app queries `visible_shapes`, chooses the
+measured sample stream, clips it to the shape's sample range, adds its separate
+placement offset, and draws it with Canvas 2D `moveTo`/`lineTo`/`stroke`. Color
+and painted width come from the joined style. Round caps/joins connect the
+segments; a circle covers single-point contacts. Canvas scaling accounts for
+the page viewport and device pixel ratio. Live ink uses the same sample policy
+and drawing primitive before the completed capture reaches SQLite.
+
+There is currently no smoothing, curve fitting or pressure-dependent width.
+Predictions are stored but excluded from measured ink. Those rendering choices
+can evolve without rewriting the original capture.
+
 Contacts commit at completion/cancellation. A crash during contact can lose
 that in-memory capture. Failed writes stop new drawing and offer JSON recovery
 of unsaved inputs; full SQLite export still covers saved records.
@@ -184,8 +207,22 @@ may expose additional measurements/corrections. Real iPad/unofficial-pencil
 sampling, latency and palm rejection still need device testing. Text, PDFs,
 redo, synchronization and CAS integration remain future work.
 
-The capture adapter, pure geometry, journal, database worker/client, canvas,
-viewer and app orchestration are separate modules. Shared storage/codecs and
+## Code boundaries
+
+| Module | Responsibility |
+| --- | --- |
+| `capture.ts`, `model.ts` | Browser snapshots, capture types and measured-sample/local-coordinate policy |
+| `geometry.ts` | Pure path/range, erasing, lasso and selection calculations |
+| `journal.ts`, `storage/` | Atomic app operations, SQLite queries and schema/reset |
+| `database.ts`, `db.worker.ts` | Worker transport, WASM initialization and persistent storage |
+| `pages.ts` | Page presets and disposable whiteboard viewports |
+| `ui/tool-picker.ts`, `ui/shell.ts` | Tool-button component and page markup |
+| `ui/canvas.ts` | Pointer lifecycle, pointer capture and frame scheduling |
+| `ui/drawing.ts`, `render.ts` | Shared Canvas primitives and notebook scene rendering |
+| `ui/viewer.ts` | Read-only browsing and neutral raw previews |
+| `app.ts` | State coordination, edit queue and control wiring |
+
+Shared storage/codecs and
 CAS abstractions can later move to Rust in covalence behind its TS/JS API;
 versioned raw byte blobs can preserve floating-point observations independently
 of float-free manifests.

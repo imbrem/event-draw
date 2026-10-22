@@ -1,6 +1,6 @@
 import type { DatabaseClient } from '../database.ts';
 import { measuredSamples, type InkData, type Point } from '../model.ts';
-import { drawPath, prepareCanvas } from '../render.ts';
+import { drawPath, prepareCanvas } from './drawing.ts';
 import { VIEWER_TABLES, type Row, type ViewerTable } from '../storage/sql.ts';
 
 export class DatabaseViewer {

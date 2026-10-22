@@ -1,3 +1,5 @@
+import { PAGE_PRESETS } from '../pages.ts';
+
 export function element<T extends HTMLElement = HTMLElement>(id: string): T {
   return document.getElementById(id) as T;
 }
@@ -25,19 +27,13 @@ export function mountShell() {
       <section class="page-tools" aria-label="Pages">
         <label>Page <select id="page" aria-label="Current page"></select></label>
         <label>New page <select id="page-size" aria-label="New page size">
-          <option value="a4">A4 portrait</option><option value="letter">US Letter</option>
-          <option value="landscape">A4 landscape</option><option value="square">Square</option>
-          <option value="whiteboard">Infinite whiteboard</option>
+          ${PAGE_PRESETS.map((p) => '<option value="' + p.id + '">' + p.label + '</option>').join('')}
         </select></label>
         <button id="add-page" disabled>Add page</button>
       </section>
       <section class="toolbar" aria-label="Drawing tools">
+        <div id="tool-picker" class="tool-picker" role="group" aria-label="Tools"></div>
         <div class="tools">
-          <label>Tool <select id="tool" aria-label="Tool">
-            <option value="pen">Pen</option><option value="erase-parts">Erase parts</option>
-            <option value="erase-strokes">Erase whole strokes</option><option value="lasso">Lasso select</option>
-            <option value="pan">Pan board</option>
-          </select></label>
           <label id="color-control">Ink <input id="color" type="color" value="#203b42" aria-label="Ink color"></label>
           <label id="width-control">Width <input id="width" type="range" min="1" max="12" value="3" aria-label="Pen width"></label>
           <label id="eraser-control" hidden>Size <input id="radius" type="range" min="3" max="50" value="12" aria-label="Eraser radius"></label>
