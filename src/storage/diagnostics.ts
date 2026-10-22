@@ -5,6 +5,7 @@ export interface DatabaseDiagnostics {
   shapes: number; visibleShapes: number; appEvents: number; effects: number;
   documents: number; activePages: number; deletedPages: number;
   rawBytes: number; assetBytes: number;
+  pageObjects: number; renderedObjects: number; boxes: number; activeBoxes: number; detectionRuns: number; failedDetectionRuns: number;
 }
 /** On-demand aggregate queries; no extra metadata is written into raw captures. */
 export function databaseDiagnostics(db: SqlDatabase): DatabaseDiagnostics {
@@ -20,5 +21,11 @@ export function databaseDiagnostics(db: SqlDatabase): DatabaseDiagnostics {
     (SELECT count(*) FROM pages WHERE deleted = 0) AS activePages,
     (SELECT count(*) FROM pages WHERE deleted = 1) AS deletedPages,
     (SELECT coalesce(sum(length(CAST(data_json AS BLOB))), 0) FROM stroke_events) AS rawBytes,
+    (SELECT count(*) FROM visible_objects) AS pageObjects,
+    (SELECT count(*) FROM visible_objects WHERE rendered = 1) AS renderedObjects,
+    (SELECT count(*) FROM detected_boxes) AS boxes,
+    (SELECT count(*) FROM active_boxes) AS activeBoxes,
+    (SELECT count(*) FROM detection_runs) AS detectionRuns,
+    (SELECT count(*) FROM detection_runs WHERE status = 'error') AS failedDetectionRuns,
     (SELECT coalesce(sum(byte_length), 0) FROM assets) AS assetBytes`)[0] as unknown as DatabaseDiagnostics;
 }

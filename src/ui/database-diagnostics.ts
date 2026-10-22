@@ -18,6 +18,9 @@ export function diagnosticsPanel(stats: DatabaseDiagnostics): HTMLElement {
     ['App events / shape effects', stats.appEvents + ' / ' + stats.effects],
     ['Documents / active pages / deleted pages', stats.documents + ' / ' + stats.activePages + ' / ' + stats.deletedPages],
     ['Raw JSON / PDF content', bytes(stats.rawBytes) + ' / ' + bytes(stats.assetBytes)],
+    ['Objects on page / linked notes', stats.renderedObjects + ' / ' + (stats.pageObjects - stats.renderedObjects)],
+    ['Active boxes', ratio(stats.activeBoxes, stats.boxes)],
+    ['Detector runs / failed runs', stats.detectionRuns + ' / ' + stats.failedDetectionRuns],
   ];
   for (const [label, value] of rows) {
     const term = document.createElement('dt'), definition = document.createElement('dd');

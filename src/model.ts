@@ -36,7 +36,16 @@ export type Page = { id: number; document_id: number; page_number: number; sourc
   { kind: 'whiteboard'; width: null; height: null }
 );
 export interface Style { color: string; lineWidth: number; opacity?: number; blendMode?: 'source-over' | 'multiply' }
-export interface VisibleText { page_id: number; content_id: number; format: string; source: string }
+export interface ObjectPlacement { rendered: boolean; x: number; y: number; width: number; height: number; rotation: number; label: string }
+export interface ObjectInput extends ObjectPlacement { pageId: number; id?: number; format: string; data: unknown; sourceShapeIds?: number[] }
+export interface PageObject {
+  id: number; page_id: number; content_id: number; format: string; data_version: number; data_json: string;
+  rendered: number; x: number; y: number; width: number; height: number; rotation: number; label: string; paint_order: number;
+}
+export interface DetectedBox {
+  id: number; page_id: number; policy_id: number; run_id: number; center_x: number; center_y: number;
+  width: number; height: number; rotation: number; confidence: number; source_key: string; shape_ids: string;
+}
 export type Tool = 'pen' | 'highlighter' | 'restyle' | 'erase-parts' | 'erase-strokes' | 'lasso' | 'pan';
 export interface Gesture {
   pageId: number;
@@ -72,13 +81,14 @@ export interface State {
   documents: Document[];
   pages: Page[];
   shapes: VisibleShape[];
-  texts: VisibleText[];
+  objects: PageObject[];
+  boxes: DetectedBox[];
   rawCount: number;
   eventCount: number;
   undoablePages: number[];
 }
 export const EMPTY_STATE: State = {
-  documents: [], pages: [], shapes: [], texts: [], rawCount: 0, eventCount: 0, undoablePages: [],
+  documents: [], pages: [], shapes: [], objects: [], boxes: [], rawCount: 0, eventCount: 0, undoablePages: [],
 };
 export type Range = [number, number];
 

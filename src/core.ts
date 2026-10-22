@@ -3,6 +3,8 @@ export * from './model.ts';
 export * from './ink.ts';
 export * from './interactions.ts';
 export * from './plugins.ts';
+export * from './detection.ts';
+export * from './pipelines.ts';
 export * from './transformations.ts';
 export * from './geometry.ts';
 export * from './replay.ts';

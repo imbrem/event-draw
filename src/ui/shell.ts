@@ -56,7 +56,7 @@ export function mountShell() {
   <main>
     <section id="notebook-panel">
       <div class="notebook-workspace"><div id="page-viewport" class="page-viewport"><div class="page-frame">
-        <div id="paper" class="paper"><canvas id="pdf-canvas" aria-label="PDF page background" hidden></canvas><canvas id="canvas" aria-label="Drawing page"></canvas></div>
+        <div id="paper" class="paper"><canvas id="pdf-canvas" aria-label="PDF page background" hidden></canvas><canvas id="canvas" aria-label="Drawing page"></canvas><div id="page-objects" class="page-objects"></div></div>
       </div></div><aside id="text-panel" aria-label="Page text notes" hidden></aside></div>
       <div class="ink-dock" aria-label="Drawing tools">
         <div id="tool-picker" class="tool-picker" role="group" aria-label="Tools"></div>
@@ -69,6 +69,7 @@ export function mountShell() {
           <label>Lasso <select id="lasso-policy" aria-label="Lasso policy"></select></label>
           <label id="eraser-control" hidden>Size <input id="radius" type="range" min="3" max="50" value="12" aria-label="Eraser radius"></label>
           <label><input id="touch" type="checkbox" checked> Finger drawing</label>
+          <label><input id="show-boxes" type="checkbox" checked> Show detected boxes</label>
           <button id="clear">Clear ink</button>
         </div></details>
         <div class="zoom-controls"><button id="zoom-out" aria-label="Zoom out">−</button><button id="zoom-in" aria-label="Zoom in">+</button><button id="home-view">Fit page</button></div>

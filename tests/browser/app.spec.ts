@@ -695,6 +695,7 @@ test('Markdown/math notes autosave, survive page changes and reload, export draf
   page.on('response', (response) => { if (response.status() >= 400) errors.push(response.status() + ' ' + response.url()); });
   await page.goto('/'); await expect(page.locator('#save-state')).toHaveText('Saved');
   await page.locator('#toggle-text').click();
+  await page.locator('#add-page-text').click();
   const source = page.getByRole('textbox', { name: 'Markdown note', exact: true });
   await source.fill('# Variables\n\n**Given** $x=5$\n\n<script>alert(1)</script>');
   await expect(page.locator('#text-preview h1')).toHaveText('Variables');
@@ -704,10 +705,11 @@ test('Markdown/math notes autosave, survive page changes and reload, export draf
   await expect(page.locator('#text-status')).toHaveText('Saved');
   await source.fill('# Latest\n$2x=10$');
   const immediate = await exported(page); // flushes without waiting for debounce
-  try { expect(immediate.prepare('SELECT source FROM visible_texts').get()!.source).toBe('# Latest\n$2x=10$'); }
+  try { expect(immediate.prepare("SELECT json_extract(data_json, '$.source') AS source FROM visible_objects").get()!.source).toBe('# Latest\n$2x=10$'); }
   finally { immediate.close(); }
   await menu(page); await page.locator('#add-page').click(); await menu(page, false);
   await expect(page.locator('#page-number')).toHaveValue('2'); await expect(source).toHaveValue('');
+  await page.locator('#add-linked-note').click();
   await source.fill('Second page');
   // Navigation flushes a dirty draft, preserving its page association.
   await page.locator('#previous-page').click();
@@ -720,9 +722,9 @@ test('Markdown/math notes autosave, survive page changes and reload, export draf
   await page.locator('#toggle-text').click(); await expect(source).toHaveValue('# Latest\n$2x=10$');
   const full = await exported(page), compact = await exported(page, '#export-visible');
   try {
-    expect(compact.prepare('SELECT * FROM visible_texts').all()).toEqual(full.prepare('SELECT * FROM visible_texts').all());
+    expect(compact.prepare('SELECT * FROM visible_objects').all()).toEqual(full.prepare('SELECT * FROM visible_objects').all());
     expect(full.prepare('SELECT count(*) AS n FROM stroke_events').get()!.n).toBe(0);
-    expect(compact.prepare('SELECT count(*) AS n FROM text_contents').get()!.n).toBe(1);
+    expect(compact.prepare('SELECT count(*) AS n FROM object_contents').get()!.n).toBe(2);
   } finally { full.close(); compact.close(); }
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(source).toBeVisible(); await expect(page.locator('#close-text')).toBeVisible();
@@ -737,12 +739,13 @@ test('typing during an in-flight text save commits the latest draft without losi
     const post = Worker.prototype.postMessage;
     Worker.prototype.postMessage = function (message: unknown, options?: StructuredSerializeOptions | Transferable[]) {
       const send = () => post.call(this, message, Array.isArray(options) ? { transfer: options } : options);
-      if (message && typeof message === 'object' && 'method' in message && message.method === 'setText') setTimeout(send, 350);
+      if (message && typeof message === 'object' && 'method' in message && message.method === 'setObject') setTimeout(send, 350);
       else send();
     };
   });
   await page.goto('/'); await expect(page.locator('#save-state')).toHaveText('Saved');
   await page.locator('#toggle-text').click();
+  await page.locator('#add-page-text').click();
   const source = page.getByRole('textbox', { name: 'Markdown note', exact: true });
   await source.fill('First draft'); await page.locator('#save-text').click();
   await expect(page.locator('#text-status')).toHaveText('Saving…');
@@ -752,10 +755,101 @@ test('typing during an in-flight text save commits the latest draft without losi
   await expect(page.locator('#save-state')).toHaveText('Saved');
   const full = await exported(page);
   try {
-    expect(full.prepare('SELECT source FROM visible_texts').get()!.source).toBe('Latest **during save** $x=5$');
-    expect(full.prepare('SELECT count(*) AS n FROM text_contents').get()!.n).toBe(2);
+    expect(full.prepare("SELECT json_extract(data_json, '$.source') AS source FROM visible_objects").get()!.source).toBe('Latest **during save** $x=5$');
+    expect(full.prepare('SELECT count(*) AS n FROM object_contents').get()!.n).toBe(3);
   } finally { full.close(); }
   await page.reload(); await expect(page.locator('#save-state')).toHaveText('Saved');
   await page.locator('#toggle-text').click();
   await expect(source).toHaveValue('Latest **during save** $x=5$');
+});
+
+test('multiple linked notes and positioned text/math share content renderers, placement, deletion and undo', async ({ page }) => {
+  const errors: string[] = []; page.on('pageerror', (e) => errors.push(e.message));
+  await page.goto('/'); await expect(page.locator('#save-state')).toHaveText('Saved');
+  await page.locator('#toggle-text').click(); await page.locator('#add-page-text').click();
+  const source = page.locator('#text-source');
+  await source.fill('# On the page\n**Given** $x=5$'); await expect(page.locator('#text-status')).toHaveText('Saved');
+  await expect(page.locator('.page-object h1')).toHaveText('On the page');
+  await expect(page.locator('.page-object .katex')).toHaveCount(1);
+  await page.locator('#add-linked-note').click(); await source.fill('First private note'); await expect(page.locator('#text-status')).toHaveText('Saved');
+  await page.locator('#add-linked-note').click(); await source.fill('Second private note'); await expect(page.locator('#text-status')).toHaveText('Saved');
+  await expect(page.locator('#content-object option')).toHaveCount(3); await expect(page.locator('.page-object')).toHaveCount(1);
+  await page.getByLabel('Content object').selectOption('1');
+  await expect(source).toHaveValue('# On the page\n**Given** $x=5$');
+  await page.locator('#object-x').fill('150'); await page.locator('#object-y').fill('200');
+  await page.locator('#object-rotation').fill('30'); await page.locator('#object-label').fill('Equation');
+  await page.locator('#object-format').fill('math/latex'); await source.fill('x^2 + y^2 = 1');
+  await expect(page.locator('#text-status')).toHaveText('Saved');
+  await expect(page.locator('.page-object .katex')).toHaveCount(1);
+  const rotation = await page.locator('.page-object').evaluate((e) => Number((e as HTMLElement).style.transform.match(/rotate\(([^r]+)rad\)/)?.[1]));
+  expect(rotation).toBeCloseTo(Math.PI / 6, 5);
+  await page.locator('#close-text').click();
+  await page.locator('#zoom-in').click(); await page.locator('#home-view').click();
+  await expect(page.locator('.page-object')).toBeVisible();
+  await page.screenshot({ path: 'test-results/page-content.png', fullPage: true });
+  const full = await exported(page), compact = await exported(page, '#export-visible');
+  try {
+    expect(full.prepare('SELECT rendered FROM visible_objects ORDER BY id').all()).toEqual([{ rendered: 1 }, { rendered: 0 }, { rendered: 0 }]);
+    expect(full.prepare("SELECT json_extract(data_json, '$.source') AS source FROM visible_objects ORDER BY id").all()).toEqual([
+      { source: 'x^2 + y^2 = 1' }, { source: 'First private note' }, { source: 'Second private note' },
+    ]);
+    expect(compact.prepare('SELECT * FROM visible_objects ORDER BY id').all()).toEqual(full.prepare('SELECT * FROM visible_objects ORDER BY id').all());
+    expect(full.prepare('SELECT x, y, rotation, format FROM visible_objects WHERE id=1').get()).toEqual({ x: 150, y: 200, rotation: Math.PI / 6, format: 'math/latex' });
+  } finally { full.close(); compact.close(); }
+  await page.reload(); await expect(page.locator('.page-object .katex')).toHaveCount(1);
+  await page.locator('#toggle-text').click(); await page.locator('#delete-object').click(); await expect(page.locator('.page-object')).toHaveCount(0);
+  await page.locator('#undo').click(); await expect(page.locator('.page-object .katex')).toHaveCount(1);
+  expect(errors).toEqual([]);
+});
+
+test('detected boxes link constituent strokes and finish/break events; erasure, undo, rotation and compact export preserve provenance', async ({ page }) => {
+  await page.goto('/');
+  for (const points of [[[100, 100], [400, 100]], [[400, 100], [400, 300]], [[400, 300], [100, 300]], [[100, 300], [100, 100]]]) await stroke(page, points);
+  await expect(page.locator('.detected-box')).toHaveCount(1);
+  await page.getByRole('button', { name: 'Lasso select', exact: true }).click();
+  await page.getByRole('button', { name: 'Select strokes for box 1', exact: true }).click();
+  await expect(page.locator('#selection-count')).toHaveText('4 selected');
+  await page.getByRole('button', { name: 'Erase parts', exact: true }).click();
+  await stroke(page, [[250, 50], [250, 140]]); await expect(page.locator('.detected-box')).toHaveCount(0);
+  await page.locator('#undo').click(); await expect(page.locator('.detected-box')).toHaveCount(1);
+  const full = await exported(page), compact = await exported(page, '#export-visible');
+  try {
+    expect(full.prepare("SELECT kind FROM app_events WHERE kind LIKE 'box.%' ORDER BY id").all()).toEqual([{ kind: 'box.finish' }, { kind: 'box.break' }, { kind: 'box.finish' }]);
+    expect(full.prepare('SELECT * FROM box_shapes').all()).toHaveLength(4);
+    expect(compact.prepare('SELECT * FROM active_boxes').all()).toEqual(full.prepare('SELECT * FROM active_boxes').all());
+    expect(compact.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
+  } finally { full.close(); compact.close(); }
+  await tab(page, 'events'); await expect(page.locator('#record-json')).toContainText('box.finish');
+  await expect(page.locator('#event-content')).toContainText('raw_stroke_id');
+  await page.locator('#return-notebook').click(); await clearPage(page);
+  await page.getByRole('button', { name: 'Pen', exact: true }).click();
+  const angle = Math.PI / 6;
+  const points = [[-150, -90], [150, -90], [150, 90], [-150, 90], [-150, -90]].map(([x, y]) => [400 + x * Math.cos(angle) - y * Math.sin(angle), 300 + x * Math.sin(angle) + y * Math.cos(angle)]);
+  await stroke(page, points); await expect(page.locator('.detected-box')).toHaveCount(1);
+  await page.screenshot({ path: 'test-results/rotated-box.png', fullPage: true });
+  const rotated = await exported(page);
+  try { expect(Math.abs(Number(rotated.prepare('SELECT rotation FROM active_boxes').get()!.rotation) - angle)).toBeLessThan(.02); }
+  finally { rotated.close(); }
+});
+
+test('speed/pressure formulas are configurable in notebook and per-trace preview without changing raw samples', async ({ page }) => {
+  await page.goto('/'); await expect(page.locator('#save-state')).toHaveText('Saved');
+  await page.locator('#ink-settings').evaluate((e) => { (e as HTMLDetailsElement).open = true; });
+  await page.getByLabel('Pressure policy', { exact: true }).selectOption('pressure-speed@1');
+  await page.getByLabel('Pressure weight', { exact: true }).fill('0'); await page.getByLabel('Speed weight', { exact: true }).fill('1');
+  await page.getByLabel('Speed response', { exact: true }).selectOption('thicker-fast');
+  await page.getByLabel('Weighting', { exact: true }).selectOption('geometric');
+  await page.locator('#ink-settings').evaluate((e) => { (e as HTMLDetailsElement).open = false; });
+  await penTrace(page);
+  const full = await exported(page);
+  try {
+    const policy = JSON.parse(full.prepare('SELECT config_json FROM ink_policies').get()!.config_json as string);
+    expect(policy.pressure.id).toBe('pressure-speed@1'); expect(policy.pressure.options).toMatchObject({ pressureWeight: 0, speedWeight: 1, direction: 'thicker-fast', mix: 'geometric' });
+    const raw = full.prepare('SELECT data_json FROM stroke_events').get()!.data_json as string;
+    expect(raw).not.toContain('speedWeight'); expect(raw).toContain('pressure');
+  } finally { full.close(); }
+  await tab(page, 'raw'); await page.getByText('Try a processor on this trace', { exact: true }).click();
+  await page.getByLabel('Preview Pressure policy').selectOption('speed-width@1');
+  await page.getByLabel('Preview Speed exponent').fill('2'); await page.getByRole('button', { name: 'Preview policies', exact: true }).click();
+  await expect(page.locator('.output-status')).toHaveText('Experimental preview · not saved');
 });

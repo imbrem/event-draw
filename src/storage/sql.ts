@@ -27,7 +27,8 @@ export function insertRow(db: SqlDatabase, table: string, row: Row): void {
 }
 export const VIEWER_TABLES = [
   'app_events', 'app_event_shapes', 'shapes', 'styles', 'documents', 'assets', 'pages', 'capture_sessions',
-  'stroke_events', 'ink_policies', 'ink_outputs', 'visible_shapes', 'text_contents', 'app_event_texts', 'visible_texts',
+  'stroke_events', 'ink_policies', 'ink_outputs', 'visible_shapes', 'object_contents', 'page_objects', 'object_sources', 'app_event_objects', 'visible_objects',
+  'detector_policies', 'detection_runs', 'detected_boxes', 'box_shapes', 'app_event_boxes', 'active_boxes',
 ] as const;
 export type ViewerTable = typeof VIEWER_TABLES[number];
 export interface BrowseResult {

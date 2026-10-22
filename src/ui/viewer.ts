@@ -127,13 +127,18 @@ export class DatabaseViewer {
       this.preview = new StrokePreview(preview, JSON.parse(String(row.data_json)) as InkData, outputs);
     }
     if (this.table === 'app_events') {
-      const related = await this.client.related(Number(row.id));
+      const [related, content] = await Promise.all([this.client.related(Number(row.id)), this.client.relatedContent(Number(row.id))]);
       if (!detail.contains(pre)) return; // selection changed while querying
       const label = document.createElement('h4'), effects = document.createElement('pre');
       label.textContent = 'Referenced shape states';
       effects.id = 'event-effects';
       effects.textContent = JSON.stringify(related, null, 2);
       detail.append(label, effects);
+      if (content.objects.length || content.boxes.length) {
+        const heading = document.createElement('h4'), linked = document.createElement('pre');
+        heading.textContent = 'Referenced content and detections'; linked.id = 'event-content';
+        linked.textContent = JSON.stringify(content, null, 2); detail.append(heading, linked);
+      }
     }
   }
 }

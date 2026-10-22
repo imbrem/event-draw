@@ -1,5 +1,5 @@
 PRAGMA foreign_keys = ON;
-PRAGMA user_version = 4;
+PRAGMA user_version = 5;
 
 -- Content IDs are opaque to readers. The current importer emits sha256:<hex>.
 CREATE TABLE IF NOT EXISTS assets (
@@ -92,6 +92,7 @@ CREATE TABLE IF NOT EXISTS app_events (
   tool TEXT,
   style_id INTEGER REFERENCES styles(id),
   policy_id INTEGER REFERENCES ink_policies(id),
+  cause_event_id INTEGER REFERENCES app_events(id),
   eraser_radius REAL CHECK (eraser_radius > 0),
   undoable INTEGER NOT NULL DEFAULT 0 CHECK (undoable IN (0, 1)),
   undo_of_event_id INTEGER REFERENCES app_events(id),
@@ -136,22 +137,88 @@ JOIN styles t ON t.id = e.style_id
 JOIN pages p ON p.id = e.page_id
 WHERE e.visible = 1 AND p.deleted = 0;
 
--- Immutable source revisions; formatting is a renderer choice, never raw ink.
-CREATE TABLE IF NOT EXISTS text_contents (
+-- Content is independent of its page placement or whether it is rendered.
+CREATE TABLE IF NOT EXISTS object_contents (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   format TEXT NOT NULL CHECK (length(format) > 0),
-  source TEXT NOT NULL,
-  UNIQUE (format, source)
+  data_version INTEGER NOT NULL CHECK (data_version > 0),
+  data_json TEXT NOT NULL CHECK (json_valid(data_json)),
+  UNIQUE (format, data_version, data_json)
 ) STRICT;
-CREATE TABLE IF NOT EXISTS app_event_texts (
+CREATE TABLE IF NOT EXISTS page_objects (id INTEGER PRIMARY KEY AUTOINCREMENT) STRICT;
+CREATE TABLE IF NOT EXISTS object_sources (
+  object_id INTEGER NOT NULL REFERENCES page_objects(id),
+  shape_id INTEGER NOT NULL REFERENCES shapes(id),
+  PRIMARY KEY (object_id, shape_id)
+) STRICT;
+CREATE TABLE IF NOT EXISTS app_event_objects (
   app_event_id INTEGER NOT NULL REFERENCES app_events(id),
+  object_id INTEGER NOT NULL REFERENCES page_objects(id),
   page_id INTEGER NOT NULL REFERENCES pages(id),
-  content_id INTEGER REFERENCES text_contents(id),
-  PRIMARY KEY (app_event_id, page_id)
+  content_id INTEGER NOT NULL REFERENCES object_contents(id),
+  visible INTEGER NOT NULL CHECK (visible IN (0, 1)),
+  rendered INTEGER NOT NULL CHECK (rendered IN (0, 1)),
+  x REAL NOT NULL, y REAL NOT NULL,
+  width REAL NOT NULL CHECK (width > 0), height REAL NOT NULL CHECK (height > 0),
+  rotation REAL NOT NULL,
+  label TEXT NOT NULL,
+  paint_order INTEGER NOT NULL,
+  PRIMARY KEY (app_event_id, object_id)
 ) STRICT;
-CREATE INDEX IF NOT EXISTS page_text_history ON app_event_texts(page_id, app_event_id DESC);
-CREATE VIEW IF NOT EXISTS visible_texts AS
-SELECT e.page_id, c.id AS content_id, c.format, c.source
-FROM app_event_texts e JOIN text_contents c ON c.id = e.content_id
-JOIN pages p ON p.id = e.page_id AND p.deleted = 0
-WHERE NOT EXISTS (SELECT 1 FROM app_event_texts later WHERE later.page_id = e.page_id AND later.app_event_id > e.app_event_id);
+CREATE INDEX IF NOT EXISTS object_history ON app_event_objects(object_id, app_event_id DESC);
+CREATE VIEW IF NOT EXISTS latest_object_states AS
+SELECT e.* FROM app_event_objects e WHERE NOT EXISTS
+  (SELECT 1 FROM app_event_objects later WHERE later.object_id = e.object_id AND later.app_event_id > e.app_event_id);
+CREATE VIEW IF NOT EXISTS visible_objects AS
+SELECT o.id, e.page_id, e.content_id, c.format, c.data_version, c.data_json,
+       e.rendered, e.x, e.y, e.width, e.height, e.rotation, e.label, e.paint_order
+FROM latest_object_states e JOIN page_objects o ON o.id = e.object_id
+JOIN object_contents c ON c.id = e.content_id JOIN pages p ON p.id = e.page_id
+WHERE e.visible = 1 AND p.deleted = 0;
+
+CREATE TABLE IF NOT EXISTS detector_policies (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  config_json TEXT NOT NULL UNIQUE CHECK (json_valid(config_json))
+) STRICT;
+CREATE TABLE IF NOT EXISTS detection_runs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  page_id INTEGER NOT NULL REFERENCES pages(id),
+  policy_id INTEGER NOT NULL REFERENCES detector_policies(id),
+  input_event_id INTEGER REFERENCES app_events(id),
+  input_key TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('ok', 'error')),
+  diagnostics_json TEXT NOT NULL CHECK (json_valid(diagnostics_json))
+) STRICT;
+-- Immutable oriented regions and relational source provenance.
+CREATE TABLE IF NOT EXISTS detected_boxes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  page_id INTEGER NOT NULL REFERENCES pages(id),
+  policy_id INTEGER NOT NULL REFERENCES detector_policies(id),
+  run_id INTEGER NOT NULL REFERENCES detection_runs(id),
+  source_key TEXT NOT NULL,
+  center_x REAL NOT NULL, center_y REAL NOT NULL,
+  width REAL NOT NULL CHECK (width > 0), height REAL NOT NULL CHECK (height > 0),
+  rotation REAL NOT NULL,
+  confidence REAL NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
+  UNIQUE (page_id, policy_id, source_key)
+) STRICT;
+CREATE TABLE IF NOT EXISTS box_shapes (
+  box_id INTEGER NOT NULL REFERENCES detected_boxes(id),
+  shape_id INTEGER NOT NULL REFERENCES shapes(id),
+  PRIMARY KEY (box_id, shape_id)
+) STRICT;
+CREATE TABLE IF NOT EXISTS app_event_boxes (
+  app_event_id INTEGER NOT NULL REFERENCES app_events(id),
+  box_id INTEGER NOT NULL REFERENCES detected_boxes(id),
+  active INTEGER NOT NULL CHECK (active IN (0, 1)),
+  PRIMARY KEY (app_event_id, box_id)
+) STRICT;
+CREATE INDEX IF NOT EXISTS box_history ON app_event_boxes(box_id, app_event_id DESC);
+CREATE VIEW IF NOT EXISTS latest_box_states AS
+SELECT e.* FROM app_event_boxes e WHERE NOT EXISTS
+  (SELECT 1 FROM app_event_boxes later WHERE later.box_id = e.box_id AND later.app_event_id > e.app_event_id);
+CREATE VIEW IF NOT EXISTS active_boxes AS
+SELECT b.*, (SELECT json_group_array(shape_id) FROM
+  (SELECT shape_id FROM box_shapes WHERE box_id = b.id ORDER BY shape_id)) AS shape_ids
+FROM latest_box_states e JOIN detected_boxes b ON b.id = e.box_id
+JOIN pages p ON p.id = b.page_id WHERE e.active = 1 AND p.deleted = 0;

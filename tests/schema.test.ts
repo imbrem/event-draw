@@ -14,7 +14,7 @@ test('unknown schemas are left untouched and explicit reset rebuilds an empty no
     assert.equal(d.journal.state().rawCount, 0);
     assert.equal(d.journal.state().eventCount, 0);
     assert.equal(d.journal.state().pages.length, 1);
-    assert.equal(d.db.all('PRAGMA user_version')[0].user_version, 4);
+    assert.equal(d.db.all('PRAGMA user_version')[0].user_version, 5);
     assert.equal(d.db.all('PRAGMA foreign_keys')[0].foreign_keys, 1);
   } finally { d.close(); }
 });

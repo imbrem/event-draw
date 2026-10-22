@@ -53,7 +53,27 @@ main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .page-viewport { flex: 1; min-height: 0; overflow: auto; }
 .notebook-workspace { display: flex; flex: 1; min-height: 0; min-width: 0; position: relative; }
 .notebook-workspace .page-viewport { min-width: 0; }
-#text-panel { display: flex; flex-direction: column; width: 420px; max-width: 50%; min-height: 0; background: #fffefa; border-left: 1px solid #d9ded7; }
+#text-panel { display: flex; flex-direction: column; width: 420px; max-width: 50%; min-height: 0; overflow: auto; background: #fffefa; border-left: 1px solid #d9ded7; }
+.text-header, .text-source-label, .object-properties, .object-actions, .object-choice { flex: none; }
+.object-actions { display: flex; gap: 6px; padding: 0 12px 8px; }
+.object-choice, .object-properties { padding: 0 12px 8px; }
+.object-properties { display: grid; gap: 6px; font-size: 11px; }
+.object-properties input:not([type=checkbox]), .object-choice select { min-width: 0; width: 100%; }
+.object-placement { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.object-placement label { display: block; }
+.object-placement input { padding: 5px; }
+#delete-object { flex: none; margin: 8px 12px; align-self: start; }
+.page-objects { position: absolute; inset: 0 auto auto 0; pointer-events: none; transform-origin: 0 0; overflow: hidden; }
+.page-object, .detected-box { position: absolute; transform-origin: center; }
+.page-object { overflow: hidden; }
+.page-object.editing { outline: 1px dashed #527e86; }
+.page-object .object-body { width: 100%; height: 100%; min-height: 0; padding: 8px; font-size: 24px; overflow: hidden; }
+.page-object h1 { font-size: 36px; } .page-object h2 { font-size: 30px; }
+.edit-page-object { position: absolute; right: 0; top: 0; pointer-events: auto; font-size: 14px; }
+.detected-box { background: #319cb318; border: 2px solid #319cb380; }
+.detected-box > button { position: absolute; top: -24px; left: 0; pointer-events: auto; font-size: 12px; padding: 2px 4px; white-space: nowrap; color: #235c68; background: #e7f4f5; }
+.width-formula { padding: 8px; margin: 8px 0; font-size: 11px; }
+.width-formula input { width: 72px; min-width: 0; padding: 4px; }
 .text-header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px; font-size: 12px; }
 #text-status { margin-right: auto; color: #71817c; font-size: 10px; }
 .text-source-label { display: flex; flex-direction: column; align-items: stretch; padding: 0 12px; color: #71817c; }

@@ -1,4 +1,4 @@
-import type { CaptureSession, Gesture, PdfImport, State } from './model.ts';
+import type { CaptureSession, Gesture, PdfImport, State, ObjectInput } from './model.ts';
 import type { BrowseResult, Row, ViewerTable } from './storage/sql.ts';
 import type { DatabaseDiagnostics } from './storage/diagnostics.ts';
 import type { InkPolicy } from './ink.ts';
@@ -55,9 +55,11 @@ export class DatabaseClient {
   deleteShapes(pageId: number, shapeIds: number[]) { return this.call<State>('deleteShapes', { pageId, shapeIds }); }
   reprocess(pageId: number, shapeIds: number[], policy: InkPolicy) { return this.call<State>('reprocess', { pageId, shapeIds, policy }); }
   outputs(rawId: number) { return this.call<Row[]>('outputs', rawId); }
-  setText(pageId: number, format: string, source: string) { return this.call<State>('setText', { pageId, format, source }); }
+  setObject(input: ObjectInput) { return this.call<State>('setObject', input); }
+  deleteObject(pageId: number, id: number) { return this.call<State>('deleteObject', { pageId, id }); }
   browse(table: ViewerTable, offset = 0) { return this.call<BrowseResult>('browse', { table, offset }); }
   related(eventId: number) { return this.call<Row[]>('related', eventId); }
+  relatedContent(eventId: number) { return this.call<{ objects: Row[]; boxes: Row[] }>('relatedContent', eventId); }
   diagnostics() { return this.call<DatabaseDiagnostics>('diagnostics'); }
   export(mode: 'full' | 'visible') { return this.call<Uint8Array<ArrayBuffer>>('export', mode); }
 }

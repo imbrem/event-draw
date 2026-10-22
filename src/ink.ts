@@ -1,4 +1,4 @@
-import { measuredSamples, type InkData, type Point, type Sample } from './model.ts';
+import { measuredSamples, measuredDeliveries, type InkData, type Point, type Sample } from './model.ts';
 import { PluginRegistry } from './plugins.ts';
 
 /** IDs name immutable implementations: use a new version or code CID after edits. */
@@ -9,7 +9,7 @@ export interface TracePoint extends Point { sourceIndex: number }
 export interface InkPoint extends TracePoint { widthFactor: number }
 export interface InkOutput { kind: 'ink-path'; points: InkPoint[] }
 export interface InkResult extends InkOutput { rejected: string | null }
-export interface InkInput { samples: readonly Sample[] }
+export interface InkInput { samples: readonly Sample[]; clocks: readonly (number | null)[] }
 export type Smoother = (input: InkInput, options: Algorithm['options']) => TracePoint[];
 export type Pressure = (input: InkInput, points: readonly TracePoint[], options: Algorithm['options']) => number[];
 export type Rejector = (input: InkInput, options: Algorithm['options']) => string | null;
@@ -35,7 +35,8 @@ export class InkProcessors {
     const smooth = get(this.smoothers, policy.smoothing), pressure = get(this.pressures, policy.pressure);
     const reject = get(this.rejectors, policy.rejection);
     // Give plugins their own samples. They can never mutate the original capture.
-    const input = { samples: measuredSamples(data).map((p) => ({ ...p })) };
+    const input = { samples: measuredSamples(data).map((p) => ({ ...p })), clocks: measuredDeliveries(data).flatMap((d) =>
+      (d.coalesced.length ? d.coalesced : [d.reported]).map((p) => Number.isFinite(p.timeStamp) ? p.timeStamp : Number.isFinite(d.receivedAt) ? d.receivedAt : null)) };
     const rejected = reject(input, { ...policy.rejection.options });
     if (rejected !== null && typeof rejected !== 'string') throw new Error('Ink rejector must return a reason or null');
     if (rejected || !input.samples.length) return { kind: 'ink-path', points: [], rejected: rejected || 'No measured samples' };
@@ -85,7 +86,40 @@ export function createInkProcessors(): InkProcessors {
       return values[i] + ((values[Math.min(i + 1, values.length - 1)] ?? values[i]) - values[i]) * fraction;
     });
   });
+  registry.pressures.set('speed-width@1', (input, points, options) => formulaWidths(input, points, { ...options, pressureWeight: 0, speedWeight: 1 }));
+  registry.pressures.set('pressure-speed@1', formulaWidths);
   return registry;
+}
+/** Speeds are page units/ms. Invalid, tied or regressing clocks do not invent
+ * velocity. The first/last sample uses its available neighbouring interval.
+ */
+export function sampleSpeeds(input: InkInput): (number | null)[] {
+  const intervals = input.samples.slice(1).map((p, i) => {
+    const a = input.clocks[i], b = input.clocks[i + 1], q = input.samples[i];
+    return a !== null && b !== null && b > a ? Math.hypot(p.x - q.x, p.y - q.y) / (b - a) : null;
+  });
+  return input.samples.map((_, i) => {
+    const speeds = [intervals[i - 1], intervals[i]].filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
+    return speeds.length ? speeds.reduce((a, b) => a + b, 0) / speeds.length : null;
+  });
+}
+export function formulaWidths(input: InkInput, points: readonly TracePoint[], options: Algorithm['options']): number[] {
+  const number = (key: string, fallback: number, lo: number, hi: number) => typeof options[key] === 'number' && Number.isFinite(options[key]) ? Math.max(lo, Math.min(hi, options[key] as number)) : fallback;
+  const min = number('min', .35, .05, 8), max = Math.max(min, number('max', 1.65, min, 8)), reference = number('referenceSpeed', .5, .001, 1000);
+  const pw = number('pressureWeight', .7, 0, 10), sw = number('speedWeight', .3, 0, 10);
+  const pe = number('pressureExponent', 1, .1, 8), se = number('speedExponent', 1, .1, 8), speeds = sampleSpeeds(input);
+  let previous = .5;
+  const values = input.samples.map((sample, i) => {
+    let p = sample.pressure;
+    if (sample.buttons === 0 && p === 0) p = previous;
+    const validPressure = sample.pointerType === 'pen' && p !== null && Number.isFinite(p) && p >= 0 && p <= 1;
+    if (validPressure) previous = p!;
+    const pressure = validPressure ? min + (max - min) * p! ** pe : 1, speed = speeds[i];
+    const ratio = speed === null ? null : speed / (speed + reference);
+    const velocity = ratio === null ? 1 : min + (max - min) * (options.direction === 'thicker-fast' ? ratio : 1 - ratio) ** se;
+    return pw + sw === 0 ? 1 : options.mix === 'geometric' ? Math.exp((pw * Math.log(pressure) + sw * Math.log(velocity)) / (pw + sw)) : (pw * pressure + sw * velocity) / (pw + sw);
+  });
+  return points.map(({ sourceIndex }) => { const i = Math.floor(sourceIndex), t = sourceIndex - i; return values[i] + (values[Math.min(i + 1, values.length - 1)] - values[i]) * t; });
 }
 export const inkProcessors = createInkProcessors();
 /** A faulty experimental processor rejects a result, never the captured bytes. */

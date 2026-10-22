@@ -16,6 +16,7 @@ import { DatabaseViewer } from './ui/viewer.ts';
 import { ToolPicker } from './ui/tool-picker.ts';
 import { InkControls, PaintControls } from './ui/ink-controls.ts';
 import { TextEditor } from './ui/text-editor.ts';
+import { PageObjects } from './ui/page-objects.ts';
 
 export function startApp(): () => void {
   mountShell();
@@ -41,10 +42,17 @@ export function startApp(): () => void {
   const lassoLabels: Record<string, string> = { 'touch-or-enclose@1': 'Touch or enclose', 'vertices-inside@1': 'All vertices inside' };
   for (const [id] of interactionPolicies.lassos) element<HTMLSelectElement>('lasso-policy').add(new Option(lassoLabels[id] ?? id, id));
   const textEditor = new TextEditor(element('text-panel'), {
-    async save(targetPage, format, source) {
-      await edit(() => db.setText(targetPage, format, source));
+    async save(input) {
+      await edit(() => db.setObject(input));
       if (failed) throw new Error('Database write failed; export unsaved drafts before resetting.');
     },
+    async create(rendered) {
+      const targetPage = pageId, previous = new Set(state.objects.map((o) => o.id)), box = view();
+      await edit(() => db.setObject({ pageId: targetPage, format: 'text/markdown', data: { source: '' }, rendered,
+        x: box.x + box.width * .1, y: box.y + box.height * .1, width: box.width * .6, height: Math.min(240, box.height * .3), rotation: 0, label: rendered ? 'Text' : 'Note' }),
+        () => textEditor.select(state.objects.find((o) => !previous.has(o.id))!.id));
+    },
+    async remove(targetPage, id) { await edit(() => db.deleteObject(targetPage, id)); return !failed; },
     changed: () => refresh(), closed: () => showText(false),
   });
   const navigation = new PageNavigation(element('page-navigation'), selectPage);
@@ -58,6 +66,10 @@ export function startApp(): () => void {
     const box = views.get(page());
     return page()?.kind === 'whiteboard' ? { ...box, height: box.width / surface.aspect } : box;
   };
+  const pageObjects = new PageObjects(element('page-objects'), element('paper'), (id) => textEditor.select(id), (ids) => {
+    element('tool-picker').querySelector<HTMLButtonElement>('[data-tool="lasso"]')!.click();
+    selected = new Set(ids); refresh();
+  });
   const gesture = (tool: Gesture['tool']): Gesture => ({ pageId, tool,
     style: paints.style(tool === 'move-selection' ? 'lasso' : tool),
     policy: inkControls.value,
@@ -105,7 +117,7 @@ export function startApp(): () => void {
     tools.update({ disabled: busy, whiteboard: board });
     paints.select(tools.value);
     inkControls.update(busy);
-    textEditor.update(pageId, state.texts.find((t) => t.page_id === pageId), !ready || failed || active || resetting || importing);
+    textEditor.update(pageId, state.objects.filter((o) => o.page_id === pageId), !ready || failed || active || resetting || importing);
     navigation.update(pages(), pageId, busy);
     for (const id of ['document', 'document-name', 'rename-document', 'new-document', 'pdf-file', 'pdf-url', 'import-url',
       'page-size', 'add-page', 'color', 'width', 'radius', 'touch', 'zoom-in', 'zoom-out', 'home-view', 'toggle-text', 'lasso-policy']) {
@@ -146,6 +158,8 @@ export function startApp(): () => void {
     const box = view(); canvas.dataset.viewWidth = String(box.width); canvas.dataset.viewHeight = String(box.height);
     element('view-position').textContent = 'x ' + Math.round(box.x) + ', y ' + Math.round(box.y) + ' · ' + Math.round(100000 / box.width) + '%';
     surface.update(page(), currentDocument()); notebook.repaint();
+    pageObjects.update(state.objects.filter((o) => o.page_id === pageId), element<HTMLInputElement>('show-boxes').checked ? state.boxes.filter((b) => b.page_id === pageId) : [], box,
+      !element('text-panel').hidden && !busy, tools.value === 'lasso' && !busy);
   }
   function edit(work: () => Promise<State>, after?: () => void, fatal = true) {
     writes++; refresh();
@@ -206,8 +220,10 @@ export function startApp(): () => void {
     element('text-panel').hidden = !open;
     element('toggle-text').setAttribute('aria-expanded', String(open));
     if (!open) void textEditor.flush();
+    refresh();
   }
   element('toggle-text').onclick = () => showText(Boolean(element('text-panel').hidden));
+  element('show-boxes').onchange = () => refresh();
   documentSelect.onchange = () => chooseDocument(Number(documentSelect.value));
   element('rename-document').onclick = () => {
     const name = element<HTMLInputElement>('document-name').value;
@@ -283,5 +299,5 @@ export function startApp(): () => void {
     failed = true; error(value); element('storage').textContent = 'Notebook could not open'; element('recovery-actions').hidden = false; refresh();
   });
   refresh();
-  return () => { textEditor.close(); viewer.hide(); surface.close(); notebook.close(); pdfs.close(); db.close(); window.removeEventListener('beforeunload', unload); };
+  return () => { textEditor.close(); pageObjects.close(); viewer.hide(); surface.close(); notebook.close(); pdfs.close(); db.close(); window.removeEventListener('beforeunload', unload); };
 }

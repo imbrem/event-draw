@@ -1,12 +1,14 @@
 import {
   localize, measuredSamples, type CaptureSession, type Gesture, type PdfImport,
-  type State, type Style, type VisibleShape,
+  type State, type Style, type VisibleShape, type ObjectInput,
 } from './model.ts';
 import { gestureDelta, planErasure } from './geometry.ts';
 import { DocumentStore } from './storage/documents.ts';
 import { databaseDiagnostics } from './storage/diagnostics.ts';
 import { InkStore } from './storage/ink-store.ts';
-import { TextStore } from './storage/text-store.ts';
+import { ObjectStore } from './storage/object-store.ts';
+import { DetectionStore } from './storage/detection-store.ts';
+import type { BoxDetectors } from './detection.ts';
 import { interactionPolicies, type InteractionPolicies, DEFAULT_LASSO, DEFAULT_TOUCH } from './interactions.ts';
 import { DEFAULT_INK_POLICY, inkPointAt, outputIndex, type InkOutput, type InkPolicy, type InkProcessors } from './ink.ts';
 import {
@@ -17,7 +19,7 @@ export type { Row, SqlDatabase, SqlValue } from './storage/sql.ts';
 
 interface EventOptions {
   documentId?: number; pageId?: number; rawId?: number; tool?: string; styleId?: number;
-  radius?: number; policyId?: number; undoable?: boolean; undoOf?: number; data?: unknown;
+  radius?: number; policyId?: number; cause?: number; undoable?: boolean; undoOf?: number; data?: unknown;
 }
 interface Placement {
   id: number; page_id: number; style_id: number; offset_x: number;
@@ -29,15 +31,18 @@ export class Journal {
   private db: SqlDatabase;
   private documents: DocumentStore;
   private ink: InkStore;
-  private text: TextStore;
+  private objects: ObjectStore;
+  private detections: DetectionStore;
   private interactions: InteractionPolicies;
-  constructor(db: SqlDatabase, processors?: InkProcessors, interactions = interactionPolicies) {
+  constructor(db: SqlDatabase, processors?: InkProcessors, interactions = interactionPolicies, detectors?: BoxDetectors) {
     this.db = db;
     this.ink = new InkStore(db, processors);
     this.interactions = interactions;
-    this.text = new TextStore(db, (pageId) => this.event('text.set', { pageId, undoable: true }));
+    this.objects = new ObjectStore(db, (kind, pageId) => this.event(kind, { pageId, undoable: true }));
+    this.detections = new DetectionStore(db, (kind, pageId, cause, data) => this.event(kind, { pageId, cause, data }), detectors);
     this.documents = new DocumentStore(db, (kind, documentId, pageId, data) => {
       this.event(kind, { documentId, pageId, data });
+      if (kind === 'page.delete' && pageId) this.detect(pageId);
     });
   }
   private lastId(): number { return scalar(this.db, 'SELECT last_insert_rowid()'); }
@@ -55,7 +60,7 @@ export class Journal {
       occurred_at: new Date().toISOString(), kind, document_id: options.documentId ?? null, page_id: options.pageId ?? null,
       raw_stroke_id: options.rawId ?? null, tool: options.tool ?? null,
       style_id: options.styleId ?? null, eraser_radius: options.radius ?? null,
-      policy_id: options.policyId ?? null,
+      policy_id: options.policyId ?? null, cause_event_id: options.cause ?? null,
       undoable: options.undoable ? 1 : 0, undo_of_event_id: options.undoOf ?? null,
       data_version: 1, data_json: JSON.stringify(options.data ?? {}),
     });
@@ -84,7 +89,11 @@ export class Journal {
   renameDocument(id: number, name: string): State { this.documents.rename(id, name); return this.state(); }
   importPdf(input: PdfImport): State { this.documents.importPdf(input); return this.state(); }
   readPdf(hash: string): Uint8Array { return this.documents.read(hash); }
-  setText(pageId: number, format: string, source: string): State { this.text.set(pageId, format, source); return this.state(); }
+  setObject(input: ObjectInput): State { this.objects.set(input); return this.state(); }
+  deleteObject(pageId: number, id: number): State { this.objects.delete(pageId, id); return this.state(); }
+  private detect(pageId: number) {
+    this.detections.reconcile(pageId, this.visible(pageId), scalar(this.db, 'SELECT coalesce(max(id), 0) FROM app_events'));
+  }
   changePage(pageId: number, action: 'earlier' | 'later' | 'delete'): State {
     this.documents.changePage(pageId, action); return this.state();
   }
@@ -154,6 +163,7 @@ export class Journal {
           }
         }
       }
+      this.detect(input.pageId);
       return this.state();
     });
   }
@@ -164,6 +174,7 @@ export class Journal {
         const eventId = this.event('page.clear', { pageId, undoable: true });
         for (const shape of shapes) this.effect(eventId, shape, false);
       }
+      this.detect(pageId);
       return this.state();
     });
   }
@@ -184,6 +195,7 @@ export class Journal {
         const next = this.shape(id, outputIndex(output.points, from), outputIndex(output.points, to));
         this.effect(eventId, { ...shape, id: next }, true);
       }
+      this.detect(pageId);
       return this.state();
     });
   }
@@ -195,6 +207,7 @@ export class Journal {
         const eventId = this.event('selection.delete', { pageId, undoable: true });
         for (const shape of selected) this.effect(eventId, shape, false);
       }
+      this.detect(pageId);
       return this.state();
     });
   }
@@ -220,7 +233,8 @@ export class Journal {
           offset_x: Number(state.offset_x), offset_y: Number(state.offset_y), paint_order: Number(state.paint_order),
         }, previous ? previous.visible === 1 : false);
       }
-      this.text.undo(eventId, Number(target.id));
+      this.objects.undo(eventId, Number(target.id));
+      this.detect(pageId);
       return this.state();
     });
   }
@@ -232,7 +246,7 @@ export class Journal {
     return {
       documents: this.documents.all(), pages: this.documents.pages(),
       shapes: this.visible(),
-      texts: this.text.visible(),
+      objects: this.objects.visible(), boxes: this.detections.visible(),
       rawCount: scalar(this.db, 'SELECT count(*) FROM stroke_events'),
       eventCount: scalar(this.db, 'SELECT count(*) FROM app_events'),
       undoablePages: [...new Set(this.undoCandidates().map((row) => Number(row.page_id)))],
@@ -244,8 +258,9 @@ export class Journal {
     if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
       throw new Error('Invalid pagination');
     }
-    const order = table === 'app_event_shapes' ? 'app_event_id DESC, shape_id' : table === 'app_event_texts' ? 'app_event_id DESC, page_id' :
-      table === 'visible_texts' ? 'page_id' : table === 'assets' ? 'hash' : 'id DESC';
+    const order = table === 'app_event_shapes' ? 'app_event_id DESC, shape_id' : table === 'app_event_objects' ? 'app_event_id DESC, object_id' :
+      table === 'app_event_boxes' ? 'app_event_id DESC, box_id' : table === 'box_shapes' ? 'box_id, shape_id' :
+      table === 'object_sources' ? 'object_id, shape_id' : table === 'assets' ? 'hash' : 'id DESC';
     const columns = table === 'assets' ? 'hash, media_type, byte_length' : '*';
     return { table, offset, total: scalar(this.db, 'SELECT count(*) FROM ' + table),
       rows: this.db.all('SELECT ' + columns + ' FROM ' + table + ' ORDER BY ' + order + ' LIMIT ? OFFSET ?', [limit, offset]) };
@@ -261,6 +276,13 @@ export class Journal {
     return this.db.all(`SELECT o.*, p.config_json FROM ink_outputs o JOIN ink_policies p ON p.id = o.policy_id
       WHERE o.raw_stroke_id = ? ORDER BY o.id DESC`, [rawId]);
   }
+  relatedContent(eventId: number) {
+    return {
+      objects: this.db.all(`SELECT e.*, c.format, c.data_json FROM app_event_objects e JOIN object_contents c ON c.id = e.content_id WHERE e.app_event_id = ?`, [eventId]),
+      boxes: this.db.all(`SELECT e.active, b.*, s.shape_id, o.raw_stroke_id FROM app_event_boxes e JOIN detected_boxes b ON b.id = e.box_id
+        JOIN box_shapes s ON s.box_id = b.id JOIN shapes g ON g.id = s.shape_id JOIN ink_outputs o ON o.id = g.output_id WHERE e.app_event_id = ? ORDER BY b.id, s.shape_id`, [eventId]),
+    };
+  }
   /** Retain raw dependencies, derived ranges, styles and page/placement state. */
   snapshotInto(target: SqlDatabase): void {
     transaction(target, () => {
@@ -269,25 +291,38 @@ export class Journal {
       for (const row of this.db.all('SELECT * FROM assets')) insertRow(target, 'assets', row);
       for (const row of this.db.all('SELECT * FROM documents ORDER BY id')) insertRow(target, 'documents', row);
       for (const row of this.db.all('SELECT * FROM pages ORDER BY id')) insertRow(target, 'pages', row);
+      const required = `SELECT id FROM visible_shapes UNION
+        SELECT s.shape_id FROM object_sources s JOIN visible_objects o ON o.id = s.object_id UNION
+        SELECT s.shape_id FROM box_shapes s JOIN active_boxes b ON b.id = s.box_id UNION
+        SELECT json_extract(j.value, '$[0]') FROM active_boxes b JOIN detection_runs r ON r.id = b.run_id, json_each(r.input_key) j`;
       const queries: [string, string][] = [
-        ['capture_sessions', `SELECT DISTINCT c.* FROM capture_sessions c JOIN stroke_events r
-          ON r.capture_session_id = c.id JOIN visible_shapes v ON v.raw_stroke_id = r.id`],
-        ['stroke_events', 'SELECT DISTINCT r.* FROM stroke_events r JOIN visible_shapes v ON v.raw_stroke_id = r.id'],
+        ['capture_sessions', `SELECT DISTINCT c.* FROM capture_sessions c JOIN stroke_events r ON r.capture_session_id = c.id
+          JOIN ink_outputs o ON o.raw_stroke_id = r.id JOIN shapes s ON s.output_id = o.id WHERE s.id IN (${required})`],
+        ['stroke_events', `SELECT DISTINCT r.* FROM stroke_events r JOIN ink_outputs o ON o.raw_stroke_id = r.id JOIN shapes s ON s.output_id = o.id WHERE s.id IN (${required})`],
         ['styles', 'SELECT DISTINCT t.* FROM styles t JOIN visible_shapes v ON v.style_id = t.id'],
-        ['ink_policies', 'SELECT DISTINCT p.* FROM ink_policies p JOIN ink_outputs o ON o.policy_id = p.id JOIN visible_shapes v ON v.output_id = o.id'],
-        ['ink_outputs', 'SELECT DISTINCT o.* FROM ink_outputs o JOIN visible_shapes v ON v.output_id = o.id'],
-        ['shapes', 'SELECT s.* FROM shapes s JOIN visible_shapes v ON v.id = s.id'],
-        ['text_contents', 'SELECT DISTINCT c.* FROM text_contents c JOIN visible_texts v ON v.content_id = c.id'],
+        ['ink_policies', `SELECT DISTINCT p.* FROM ink_policies p JOIN ink_outputs o ON o.policy_id = p.id JOIN shapes s ON s.output_id = o.id WHERE s.id IN (${required})`],
+        ['ink_outputs', `SELECT DISTINCT o.* FROM ink_outputs o JOIN shapes s ON s.output_id = o.id WHERE s.id IN (${required})`],
+        ['shapes', `SELECT * FROM shapes WHERE id IN (${required})`],
+        ['object_contents', 'SELECT DISTINCT c.* FROM object_contents c JOIN visible_objects v ON v.content_id = c.id'],
+        ['page_objects', 'SELECT o.* FROM page_objects o JOIN visible_objects v ON v.id = o.id'],
+        ['object_sources', 'SELECT s.* FROM object_sources s JOIN visible_objects v ON v.id = s.object_id'],
+        ['detector_policies', 'SELECT DISTINCT p.* FROM detector_policies p JOIN active_boxes b ON b.policy_id = p.id'],
       ];
       for (const [table, sql] of queries) for (const row of this.db.all(sql)) insertRow(target, table, row);
+      for (const run of this.db.all('SELECT DISTINCT r.* FROM detection_runs r JOIN active_boxes b ON b.run_id = r.id'))
+        insertRow(target, 'detection_runs', { ...run, input_event_id: null });
+      for (const box of this.db.all('SELECT b.* FROM detected_boxes b JOIN active_boxes v ON v.id = b.id')) insertRow(target, 'detected_boxes', box);
+      for (const row of this.db.all('SELECT s.* FROM box_shapes s JOIN active_boxes b ON b.id = s.box_id')) insertRow(target, 'box_shapes', row);
       const journal = new Journal(target);
       const baseline = journal.event('history.baseline');
       for (const shape of this.visible()) journal.effect(baseline, shape, true);
-      for (const text of this.text.visible()) journal.text.effect(baseline, text.page_id, text.content_id);
-      if (JSON.stringify(this.visible()) !== JSON.stringify(journal.visible())) {
-        throw new Error('Snapshot validation failed: visible state changed');
+      for (const object of this.objects.visible()) journal.objects.effect(baseline, journal.objects.state(object));
+      for (const box of this.detections.visible()) insertRow(target, 'app_event_boxes', { app_event_id: baseline, box_id: box.id, active: 1 });
+      if (JSON.stringify(this.visible()) !== JSON.stringify(journal.visible()) ||
+        JSON.stringify(this.objects.visible()) !== JSON.stringify(journal.objects.visible()) ||
+        JSON.stringify(this.detections.visible()) !== JSON.stringify(journal.detections.visible())) {
+        throw new Error('Snapshot validation failed: rendered state or linked objects changed');
       }
-      if (JSON.stringify(this.text.visible()) !== JSON.stringify(journal.text.visible())) throw new Error('Snapshot validation failed: text changed');
     });
   }
 }

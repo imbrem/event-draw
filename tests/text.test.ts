@@ -1,34 +1,53 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { database } from './helpers.ts';
+import { database, note, gesture } from './helpers.ts';
 import { textRenderers } from '../src/text.ts';
 
-test('text revisions, clearing and undo use the shared stream with page isolation and deduplication', () => {
+test('multiple page objects share immutable content while placement, linked notes, deletion and undo remain independent', () => {
   const d = database(), compact = database();
   try {
     d.journal.addPage(1, 1, 500, 500);
-    d.journal.setText(1, 'markdown', '# First $x=5$');
-    const first = d.journal.state().texts[0];
-    d.journal.setText(1, 'markdown', '# First $x=5$');
-    assert.equal(d.journal.state().eventCount, 2); // add page + one text event
-    d.journal.setText(2, 'markdown', 'Other page');
-    d.journal.setText(1, 'markdown', 'Revision');
-    d.journal.setText(1, 'markdown', '');
-    assert.deepEqual(d.journal.state().texts.map((t) => t.page_id), [2]);
-    d.journal.undo(1); assert.equal(d.journal.state().texts[0].source, 'Revision');
-    d.journal.undo(1); assert.deepEqual(d.journal.state().texts[0], first);
-    assert.equal(d.journal.state().texts[1].source, 'Other page');
+    d.journal.setObject(note('# First $x=5$'));
+    const first = d.journal.state().objects[0];
+    d.journal.setObject(note('# First $x=5$', 1, first.id));
+    assert.equal(d.journal.state().eventCount, 2);
+    d.journal.setObject(note('# First $x=5$', 1, undefined, true));
+    const onPage = d.journal.state().objects[1];
+    assert.equal(first.content_id, onPage.content_id);
+    assert.equal(onPage.rendered, 1); assert.equal(first.rendered, 0);
+    d.journal.setObject(note('Other page', 2));
+    d.journal.setObject({ ...note('Revision', 1, first.id), x: 150, rotation: .5 });
+    d.journal.deleteObject(1, first.id);
+    assert.equal(d.journal.state().objects.length, 2);
+    d.journal.undo(1); assert.equal(JSON.parse(d.journal.state().objects[0].data_json).source, 'Revision');
+    d.journal.undo(1); assert.deepEqual(d.journal.state().objects[0], first);
+    assert.equal(d.journal.state().objects[2].page_id, 2);
     compact.db.exec('DELETE FROM capture_sessions'); d.journal.snapshotInto(compact.db);
-    assert.deepEqual(compact.journal.state().texts, d.journal.state().texts);
-    assert.equal(compact.db.all('SELECT * FROM text_contents').length, 2);
+    assert.deepEqual(compact.journal.state().objects, d.journal.state().objects);
+    assert.equal(compact.db.all('SELECT * FROM object_contents').length, 2);
     assert.deepEqual(compact.db.all('PRAGMA foreign_key_check'), []);
-    compact.journal.setText(1, 'markdown', 'New'); compact.journal.undo(1);
-    assert.deepEqual(compact.journal.state().texts[0], first);
-    d.journal.setText(1, 'future/typst', '= Heading');
-    assert.equal(d.journal.state().texts[0].format, 'future/typst');
-    assert.throws(() => d.journal.setText(99, 'markdown', 'Missing page'), /Page does not exist/);
-    assert.throws(() => d.journal.setText(1, 'markdown', 'x'.repeat(200_001)), /200,000/);
+    compact.journal.setObject(note('New', 1, first.id)); compact.journal.undo(1);
+    assert.deepEqual(compact.journal.state().objects[0], first);
+    d.journal.setObject({ ...note('= Heading'), format: 'future/typst' });
+    assert.equal(d.journal.state().objects.at(-1)!.format, 'future/typst');
+    assert.throws(() => d.journal.setObject(note('Missing page', 99)), /Page does not exist/);
+    assert.throws(() => d.journal.setObject(note('x'.repeat(1_000_001))), /1,000,000/);
+    assert.throws(() => d.journal.setObject({ ...note('Bad'), width: -1 }), /placement/);
     assert.equal(d.journal.state().rawCount, 0);
+  } finally { d.close(); compact.close(); }
+});
+
+test('content provenance retains deleted source geometry through compaction without rendering it', () => {
+  const d = database(), compact = database();
+  try {
+    d.journal.gesture(gesture([[10, 20], [30, 40]]), d.sessionId);
+    d.journal.setObject({ ...note('x = 5'), format: 'math/latex', sourceShapeIds: [1] });
+    d.journal.deleteShapes(1, [1]);
+    assert.equal(d.journal.visible().length, 0);
+    compact.db.exec('DELETE FROM capture_sessions'); d.journal.snapshotInto(compact.db);
+    assert.equal(compact.journal.visible().length, 0); assert.equal(compact.journal.state().rawCount, 1);
+    assert.deepEqual(compact.db.all('SELECT * FROM object_sources'), d.db.all('SELECT * FROM object_sources'));
+    assert.deepEqual(compact.db.all('PRAGMA foreign_key_check'), []);
   } finally { d.close(); compact.close(); }
 });
 

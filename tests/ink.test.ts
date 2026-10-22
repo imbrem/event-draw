@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { database, gesture } from './helpers.ts';
+import { database, gesture, note } from './helpers.ts';
 import { createInkProcessors, DEFAULT_INK_POLICY, InkProcessors, policyJson, type InkPolicy } from '../src/ink.ts';
 import { createInteractionPolicies } from '../src/interactions.ts';
 import { Journal } from '../src/journal.ts';
@@ -75,10 +75,10 @@ test('group reprocessing preserves erased source intervals, placement, old outpu
     }
     assert.deepEqual(source.db.all('SELECT * FROM stroke_events'), raw);
     assert.equal(source.journal.outputs(1).length, 2);
-    source.journal.setText(1, 'markdown', '**Kept** $x=5$');
+    source.journal.setObject(note('**Kept** $x=5$'));
     target.db.exec('DELETE FROM capture_sessions'); source.journal.snapshotInto(target.db);
     assert.deepEqual(target.journal.visible(), next);
-    assert.deepEqual(target.journal.state().texts, source.journal.state().texts);
+    assert.deepEqual(target.journal.state().objects, source.journal.state().objects);
     assert.equal(target.journal.outputs(1).length, 1); // only currently needed result
     assert.deepEqual(target.db.all('PRAGMA foreign_key_check'), []);
     // Baked rendering does not require the implementation that created it.
@@ -158,4 +158,26 @@ test('highlighter stores paint outside the raw trace and processing geometry', (
     assert.doesNotMatch(shape.data_json, /highlighter|opacity|color|lineWidth|policy/);
     assert.equal(d.db.all('SELECT tool FROM app_events')[0].tool, 'highlighter');
   } finally { d.close(); }
+});
+
+test('speed width and pressure/speed formula families remain configurable and preserve original observations', () => {
+  const input = gesture([[0, 0], [10, 0], [20, 0], [120, 0]]), registry = createInkProcessors();
+  input.data.deliveries.forEach((d, i) => Object.assign(d.reported, { timeStamp: i * 100, pressure: .8, pointerType: 'pen', buttons: 1 }));
+  const original = structuredClone(input.data), process = (id: string, options: Record<string, number | string> = {}) => registry.process(input.data, { ...DEFAULT_INK_POLICY, pressure: { id, options } }).points.map((p) => p.widthFactor);
+  const speed = process('speed-width@1'); assert.ok(speed[0] > speed.at(-1)!);
+  const reverse = process('speed-width@1', { direction: 'thicker-fast' }); assert.ok(reverse[0] < reverse.at(-1)!);
+  const onlyPressure = process('pressure-speed@1', { pressureWeight: 1, speedWeight: 0 });
+  assert.ok(onlyPressure.every((p, i) => Math.abs(p - process('pen-pressure@1')[i]) < 1e-12));
+  assert.deepEqual(process('pressure-speed@1', { pressureWeight: 0, speedWeight: 1 }), speed);
+  const geometric = process('pressure-speed@1', { pressureWeight: 1, speedWeight: 1, mix: 'geometric' });
+  assert.ok(Math.abs(geometric[0] - Math.sqrt(onlyPressure[0] * speed[0])) < 1e-10);
+  assert.notDeepEqual(process('speed-width@1', { speedExponent: 2 }), speed);
+  assert.deepEqual(input.data, original);
+  input.data.deliveries.forEach((d) => { d.reported.timeStamp += 12345; });
+  assert.deepEqual(process('speed-width@1'), speed); // speed is independent of clock origin
+  input.data.deliveries.forEach((d) => { d.reported.timeStamp = 0; d.receivedAt = 0; d.reported.pressure = null; });
+  assert.deepEqual(process('speed-width@1'), [1, 1, 1, 1]);
+  assert.deepEqual(process('pressure-speed@1'), [1, 1, 1, 1]);
+  input.data.deliveries.forEach((d, i) => { d.reported.timeStamp = NaN; d.receivedAt = i * 100; });
+  assert.deepEqual(process('speed-width@1'), speed); // receipt clocks are usable fallback
 });

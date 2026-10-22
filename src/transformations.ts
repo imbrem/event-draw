@@ -5,7 +5,7 @@ import type { ContentId } from './model.ts';
  * Persistence/execution of these jobs is not implemented by the notebook yet.
  */
 export interface ArtifactRef {
-  kind: 'raw-trace' | 'ink-output' | 'semantic-artifact';
+  kind: 'raw-trace' | 'ink-output' | 'semantic-artifact' | 'page-object' | 'detected-region';
   id: number | ContentId;
   range?: [number, number];
   /** Local source coordinates -> common document coordinates. */

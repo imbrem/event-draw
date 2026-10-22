@@ -4,7 +4,7 @@ import schema from './schema.sql?raw';
 import { Journal } from './journal.ts';
 import { initializeSchema, resetSchema } from './storage/schema.ts';
 import type { BrowseResult, Row, SqlDatabase, ViewerTable } from './storage/sql.ts';
-import type { CaptureSession, Gesture } from './model.ts';
+import type { CaptureSession, Gesture, ObjectInput } from './model.ts';
 import { verifyPdf } from './pdf/source.ts';
 
 const scope = self as unknown as DedicatedWorkerGlobalScope;
@@ -91,11 +91,13 @@ scope.onmessage = async ({ data: request }) => {
       case 'deleteShapes': value = journal.deleteShapes(request.payload.pageId, request.payload.shapeIds); break;
       case 'reprocess': value = journal.reprocess(request.payload.pageId, request.payload.shapeIds, request.payload.policy); break;
       case 'outputs': value = journal.outputs(request.payload); break;
-      case 'setText': value = journal.setText(request.payload.pageId, request.payload.format, request.payload.source); break;
+      case 'setObject': value = journal.setObject(request.payload as ObjectInput); break;
+      case 'deleteObject': value = journal.deleteObject(request.payload.pageId, request.payload.id); break;
       case 'undo': value = journal.undo(request.payload); break;
       case 'browse':
         value = journal.browse(request.payload.table as ViewerTable, request.payload.offset) satisfies BrowseResult; break;
       case 'related': value = journal.related(request.payload); break;
+      case 'relatedContent': value = journal.relatedContent(request.payload); break;
       case 'diagnostics': value = journal.diagnostics(); break;
       case 'export': {
         if (request.payload === 'visible') {

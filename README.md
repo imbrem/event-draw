@@ -1,7 +1,8 @@
 # Event Draw
 
 A small browser notebook with raw pointer capture, a SQLite edit journal,
-PDF annotation, multiple documents/pages, vector erasers, and an inspectable event database. No account,
+PDF annotation, positioned text/math, pluggable trace processing and box detection,
+multiple documents/pages, vector erasers, and an inspectable event database. No account,
 server, native wrapper, or covalence dependency yet.
 
 ## Run
@@ -84,12 +85,20 @@ disabled during contact and while an edit is being saved.
 - **Undo** reverses the last ink or saved text edit on the active page.
   **Clear ink** affects only that page's ink. Document/page operations are
   not undoable yet. There is no redo.
-- **Text** opens the page's Markdown source and rendered preview, including
-  inline LaTeX between `$…$` via locally bundled KaTeX. Source autosaves after
-  600 ms; navigation and exports flush drafts. Each save creates an immutable
-  revision in the same app-event stream. Text is a page-attached note in a
-  side panel, not a positioned canvas object or WYSIWYG editor. HTML is escaped,
-  remote images disabled, and TeX is rendered without trusted commands.
+- **Text → Add page text** creates a positioned Markdown object, including
+  inline LaTeX between `$…$` via locally bundled KaTeX. **Add linked note**
+  creates content attached to the page without painting it. Each page can have
+  several of either kind; the object picker switches between them. Source
+  autosaves after 600 ms; navigation and exports flush drafts. Each save creates
+  an immutable revision in the same app-event stream. Numeric placement controls
+  set position, dimensions and angle; **Show on page** toggles rendering.
+  `math/latex` renders display math. HTML is escaped, remote images disabled,
+  and TeX is rendered without trusted commands. This is a source editor with
+  previews, not WYSIWYG; lasso/drag currently moves ink only.
+- **Show detected boxes** under Ink & actions toggles translucent, rotated
+  rectangle overlays. With Lasso active, tap a box label to select its constituent
+  ink shapes. The baseline script recognizes closed outlines from one or several
+  intact contacts; see the detection section for its deliberately limited scope.
 - Add A4, Letter, landscape or square pages, or an **infinite whiteboard**.
   Whiteboards support Pan and zoom buttons, including negative coordinates.
   The view is temporary UI state; page content persists independently.
@@ -102,20 +111,23 @@ disabled during contact and while an edit is being saved.
 - **Raw strokes** displays capture records alongside a stored processing output.
   Both previews use neutral color/base width, without fragment erasing or
   placement. **Try a processor on this trace → Preview policies** compares
-  experimental smoothing/pressure/rejection without saving anything. Older
+  experimental smoothing/pressure/speed/rejection without saving anything. Older
   stored outputs remain selectable after reprocessing.
   **Replay stroke** animates the measured samples at their recorded timing,
   with 0.25×, 1× or 4× speed and Stop. Missing sample clocks fall back to receipt
   clocks; regressions clamp forward and zero-duration captures appear instantly.
   Predictions stay excluded. Replay is display-frame limited and does not write
   to the database. Original and processed geometry replay together using the
-  raw sample clock and saved source correspondence. Replay stops when changing
-  rows, refreshing or leaving the viewer.
+  raw sample clock and saved source correspondence. Time zero is the first
+  measured raw sample, shared by both views. If processing removes the first
+  50 ms, the output first appears at 50 ms; its clock is not silently rebased.
+  Replay stops when changing rows, refreshing or leaving the viewer.
 
 Both database viewers include **Database diagnostics**, covering all documents:
 ink captures with any visible geometry, all raw captures used by visible ink,
 visible/total shapes, event/effect counts, document/page counts and JSON/PDF
-payload sizes. Visibility means *any fragment remains*, not a fraction of path
+payload sizes, rendered/linked content counts and active/total boxes with detector
+run/error counts. Visibility means *any fragment remains*, not a fraction of path
 length. Eraser/lasso/move/cancelled inputs contribute to the raw denominator,
 while ink captures are raw IDs referenced by shapes. Compaction changes the
 historical denominators. Empty denominators show n/a. **Refresh database**
@@ -201,17 +213,17 @@ implemented in this prototype. PDF.js fonts/decoders/worker are bundled locally.
 
 ## Identity and schema
 
-See [src/schema.sql](src/schema.sql). The current schema version is **4**.
+See [src/schema.sql](src/schema.sql). The current schema version is **5**.
 Earlier notebooks require export/reset; no backward migration is provided.
 
 | Table/view | Purpose |
 | --- | --- |
 | `stroke_events` | Immutable raw input gestures: ID, capture session, data version, observations JSON |
-| `ink_policies` | Immutable versioned smoothing, pressure and rejection configuration |
+| `ink_policies` | Immutable versioned smoothing, pressure/speed and rejection configuration |
 | `ink_outputs` | Immutable processed geometry, raw capture/policy references and separate rejection reason |
 | `shapes` | Geometry instances: ID, output ID, fractional output-vertex range |
 | `styles` | Color, base line width, opacity and blend mode |
-| `app_events` | Unified ordered operations: ID, edit time, kind, page, input/tool/style/policy references |
+| `app_events` | Unified ordered operations: ID, edit time, kind, page, input/tool/style/policy and causal event references |
 | `app_event_shapes` | Complete shape visibility, page, style, offset and paint-order snapshots per edit |
 | `latest_shape_states` | Each shape's newest state, ordered by app-event ID |
 | `visible_shapes` | Current visible states joined to their geometry, style and raw input |
@@ -219,9 +231,13 @@ Earlier notebooks require export/reset; no backward migration is provided.
 | `documents` | Unique human name and optional PDF content reference |
 | `pages` | Stable ID, document, one-based page number, source PDF page, dimensions/kind and deletion state |
 | `capture_sessions` | Clock origin, browser/source and API exposure metadata |
-| `text_contents` | Immutable format/source revisions; arbitrary format tags for future renderers |
-| `app_event_texts` | Page/content effects, with NULL content meaning clear |
-| `visible_texts` | Current text source per active page |
+| `object_contents` | Immutable format/version/JSON payloads, without placement or edit metadata |
+| `page_objects`, `object_sources` | Content instances and optional immutable source-shape references |
+| `app_event_objects` | Complete content, visibility, rendering, placement, label and order effects |
+| `latest_object_states`, `visible_objects` | Current instances on active pages, including linked notes with `rendered=0` |
+| `detector_policies`, `detection_runs` | Versioned script/configuration and input snapshot/status/diagnostics |
+| `detected_boxes`, `box_shapes` | Immutable oriented regions and constituent shape references |
+| `app_event_boxes`, `latest_box_states`, `active_boxes` | Append-only activation effects and current detections |
 
 **Raw capture IDs, output IDs, shape IDs and app-event IDs are separate namespaces.**
 One raw gesture can have many processing outputs; one output can have several
@@ -278,14 +294,20 @@ builds a new database containing:
 1. All document names, byte-identical PDF assets and page definitions, including
    empty/deleted pages and unbounded boards.
 2. Visible shapes and their original IDs/ranges, required outputs/policies,
-   raw captures, capture sessions, styles and visible text contents.
-3. One `history.baseline` event with current shape and text effects.
+   raw captures, capture sessions and styles.
+3. Active page objects (rendered and linked), their immutable content and source
+   shapes; active boxes, detector policies, originating runs and all shapes in
+   those runs' input snapshots. Dependencies may include currently hidden ink.
+4. One `history.baseline` event with current shape, object and box effects.
 
-The export verifies ordered shape render-input and visible text equality. It leaves the source
+The export verifies ordered shape render-input, object and active-box equality. It leaves the source
 unchanged, drops prior undo history, and allows subsequent edits/undo in the
 new database. When a visible fragment references a raw capture, that whole
 capture remains: compaction removes irrelevant edit history, not portions of
-sensor data inside a retained dependency.
+sensor data inside a retained dependency. Provenance dependencies can retain
+hidden geometry without making it visible. Detection run IDs/input snapshots
+survive; their historical triggering event reference becomes NULL in the compact
+database because that edit history has been removed.
 
 ```sh
 pnpm compact event-draw-full.sqlite3 current-state.sqlite3
@@ -356,14 +378,37 @@ vertex to a fractional position in the measured sample stream for replay and
 reprocessing fragments. It must increase strictly; processors that reorder or
 combine contacts need a different output schema.
 
-`InkProcessors` accepts replaceable smoothing, pressure and whole-contact
+`InkProcessors` accepts replaceable smoothing, width and whole-contact
 rejection stages. Built-ins include no smoothing, moving average, constant
-width, pen pressure, accept-all and pen-only. They are deterministic functions
+width, pen pressure, speed width, combined pressure/speed, accept-all and pen-only.
+They are deterministic functions
 over copied observations. Output validation rejects invalid correspondence,
 nonfinite geometry and invalid width factors. An exception or malformed output
 persists an empty rejected result with diagnostics, keeping the raw contact.
 Whole-contact rejection is not a complete palm rejection system; the existing
 Finger drawing input filter still discards touch before capture when disabled.
+
+**Speed width** uses page units/ms, estimated from neighbouring raw sample
+intervals. It uses sample clocks, falling back to receipt clocks when missing;
+tied/regressing clocks supply no velocity. **Pressure + speed** offers pressure
+and speed weights, response exponents, width-factor minimum/maximum, a reference
+speed (default 0.5 units/ms), arithmetic/geometric mixing and thicker-fast or
+thinner-fast response. With `r = v / (v + referenceSpeed)`, the thicker-fast
+factor is `min + (max - min) * r^speedExponent`; thinner-fast uses `(1-r)`.
+Pressure uses `min + (max-min) * pressure^pressureExponent`. Configured weights
+are normalized by their sum; a missing measurement contributes neutral factor 1,
+and two zero weights yield 1. Speed-only fixes the weights at 0 and 1. These
+options are also available in the individual-trace preview. Estimates use raw
+page-space distance, independently of the smoothing stage and viewport zoom.
+
+Raw clocks remain unchanged in storage. Output vertices carry `sourceIndex`,
+so replay derives their time from the original contact rather than storing a
+second clock. A processor that trims leading samples therefore retains their
+delay in comparisons. A future standalone player can subtract the first retained
+time as an explicit presentation option; it should retain that offset and source
+mapping. Translating the clock origin does not change speed. Multi-contact fusion
+needs explicit shared clock/pen-up semantics, rather than resetting every input
+contact to zero and losing their temporal relationship.
 
 The policy identifies **exact immutable implementations** and options. Outputs
 deduplicate by raw capture/policy. Register a changed implementation with a new
@@ -390,7 +435,7 @@ These are trusted application plugins, not executable code from a notebook file.
 
 `pnpm build:core` emits ESM and declarations without the UI or browser database
 worker. The package exposes `event-draw/core` (Journal, SQL adapter interface,
-capture model, processing, interactions, geometry, replay and transformation
+capture/content models, processing, interactions, detection, geometry, replay and analysis/transformation
 types) and `event-draw/schema.sql`. Supply a synchronous SQLite adapter; no
 particular web framework or SQLite runtime is required. The schema is an SQL
 asset, so a browser host can import it with its bundler's raw-text mechanism.
@@ -402,6 +447,100 @@ Dynamic WASM loading, a job runner, persisted evaluation scores and model-driven
 editing are **not implemented**. A future WASM host should run in an isolated
 worker with cancellation and time/memory budgets; today's synchronous trusted
 JS callbacks cannot be preempted if they hang.
+
+## Page content and detection plugins
+
+Page text, linked notes and future generated artifacts share `Journal.setObject`
+and `deleteObject`. `ObjectInput` carries a format and JSON payload, with placement,
+label and rendered/hidden status in separate fields. Markdown and LaTeX use
+`{source: string}`. Content deduplicates independently of instances. Optional
+`sourceShapeIds` records immutable provenance on creation, retained by compact
+export even after that ink is deleted. Deletion/edits are undoable page operations.
+
+`ui/content-renderers.ts` supplies a trusted `contentRenderers` registry used by
+both the page and sidebar preview. Markdown/inline math and display LaTeX are
+implemented; unknown formats show a safe format/JSON fallback. The format field
+accepts MathML and Vega Lite tags for experiments, but **neither has a renderer
+yet**. Documents cannot install executable renderers. Objects rotate around
+their center in radians (the editor shows degrees) and share page coordinates
+with PDF and ink. The DOM content layer currently paints above ink, with clipping
+to each object's rectangle; arbitrary shared z-order and drag/resize handles
+remain future UI work.
+
+`detection.ts` is DOM-free. Inject `BoxDetectors` as the fourth `Journal`
+constructor argument, or edit `createBoxDetectors` for notebook experiments:
+
+```ts
+const detectors = new BoxDetectors({ id: 'research/rectangle@2', options: {} });
+detectors.scripts.set('research/rectangle@2', (input, options) => {
+  // input.traces: placed visible points, shape/raw/output IDs and source ranges.
+  return []; // BoxCandidate[]: center, dimensions, rotation, confidence, shapeIds
+});
+```
+
+The built-in `rectangle-outline@1` checks endpoint-connected closed outlines,
+fits a minimum-area oriented rectangle, then checks perimeter proximity and all
+four edge coverages. It supports rotation and separate nested outlines; it does
+not yet persist a parent hierarchy. Default endpoint tolerance is 12 page units,
+minimum side 20. Search is bounded to 256 recent intact traces, downsampled to
+roughly 257 points each, with at most 16 contacts per connected group. It is a
+conservative baseline for experiments, not handwriting/arrow recognition.
+Angles are radians, canonicalized approximately to `[-π/4, π/4)`; width/height
+may exchange roles across this boundary. Rectangles have no intrinsic reading
+direction. Arrowheads/text need an additional directed frame convention.
+
+Ink edits reconcile detections inside the same transaction. `box.finish` records
+constituent shape IDs and `box.break` records a change/removal, with a causal
+reference to the triggering edit. Partial erasure breaks a box even for a small
+cut; fragments are not intact outline inputs. Moving/reprocessing constituents
+creates a new derived object. Restyling preserves detection identity. Undo can
+reactivate the original box ID when its exact geometry/placement returns, even
+outside the detector's current search window. Old objects remain inspectable.
+Plugin errors are recorded in `detection_runs`, while ink still saves; changed
+constituents still invalidate old boxes. Derived events are not separate undo
+steps. The script runs at edit completion, not during an unfinished contact.
+
+For a CLI experiment on an exported notebook:
+
+```sh
+pnpm detect event-draw-full.sqlite3
+pnpm detect event-draw-full.sqlite3 ./trusted-candidate.mjs
+```
+
+The optional module default-exports a `BoxDetector` callback. Node 24 also accepts
+strip-compatible `.ts`. The command reads schema 5 without modifying the source
+and prints per-page candidate JSON. A custom module's ID hashes that file's bytes;
+a future CAS bundle should cover the entire dependency closure. These are trusted
+synchronous callbacks, with the same no-preemption limitation as ink processors.
+
+For autoresearch, use a fixed labelled corpus of raw inputs and edit sequences,
+including rotations, nested boxes, near misses, erasures and undo. Compare rotated
+region overlap/precision/recall, constituent assignment, lifecycle stability and
+runtime; reserve held-out examples. Tie candidates, configuration, corpus and
+scores to immutable implementation identities. The CLI and per-trace ink preview
+are starting points; an automated search/evaluation runner is not implemented.
+
+## Trace, image and server analysis boundaries
+
+`pipelines.ts` describes future async jobs with implementation CID, request ID,
+input snapshot key and trace or raster inputs. Hybrid jobs can include both.
+Raster inputs carry content ID, dimensions and a pixel-to-page affine transform;
+an optional rendering recipe records selected source artifacts, renderer CID and
+page bounds. This lets an image detector return regions in reproducible page
+coordinates without confusing them with screen pixels. Replies can carry artifacts
+and hierarchical oriented regions with source references. `replyIsCurrent` checks
+request and snapshot identity; a stale result may be retained for research but
+must not replace current detections without validating its dependencies. These
+are contracts, not implemented raster rendering jobs, server calls or OCR.
+
+Keep input streaming (contact begin/sample/end/cancel) separate from committed
+document operations. For multiplayer, a server can provide authoritative ordering,
+or a separate CRDT design can define conflict resolution. The proposed
+`OperationEnvelope` has actor, stable ID, sequence and causal parents, but does not
+implement either approach. SQLite integers remain local and need reference
+mapping; merging files or sorting received events alone does not guarantee
+convergence. Detections should reference a source snapshot and exact implementation
+so local and server pipelines can use the same validation/provenance rules.
 
 ## Fusion, recognition and drawing-to-math
 
@@ -430,9 +569,9 @@ or choice of model/provider.
 ## Remaining Notes functionality
 
 The prototype covers the basic handwriting/PDF annotation loop, selection,
-moving, erasing and page-attached formatted text. Reaching the important parts
+moving, erasing, positioned formatted text and linked notes. Reaching the important parts
 of a daily notes app still needs real-device latency/palm/pinch tuning, redo,
-positioned rich text and images, search/organization, reliable file import,
+direct rich-text manipulation and images, search/organization, reliable file import,
 annotated PDF export and backup/sync. Recognition, collaboration and a native
 capture bridge are separate larger projects. There is no meaningful completeness
 percentage before choosing which of these workflows matters most.
@@ -443,14 +582,16 @@ percentage before choosing which of these workflows matters most.
 | --- | --- |
 | `capture.ts`, `model.ts` | Browser snapshots, capture types and measured-sample/local-coordinate policy |
 | `ink.ts`, `plugins.ts`, `storage/ink-store.ts` | Versioned processing stages, validated baked outputs and immutable identities |
-| `interactions.ts`, `transformations.ts`, `core.ts` | Lasso/touch policies, future multi-input protocol and reusable entry point |
+| `interactions.ts`, `transformations.ts`, `pipelines.ts`, `core.ts` | Lasso/touch policies, future multi-input/analysis/sync contracts and reusable entry point |
+| `detection.ts`, `storage/detection-store.ts` | Replaceable rectangle script, validation, derived objects and activation history |
 | `geometry.ts` | Pure path/range, erasing, lasso and selection calculations |
 | `journal.ts`, `storage/` | Atomic app operations, SQLite queries and schema/reset |
 | `database.ts`, `db.worker.ts` | Worker transport, WASM initialization and persistent storage |
 | `pages.ts` | Page presets and disposable whiteboard viewports |
 | `ui/tool-picker.ts`, `ui/shell.ts` | Tool-button component and page markup |
 | `ui/ink-controls.ts` | Registry-driven policy controls and separate pen/highlighter paint preferences |
-| `text.ts`, `storage/text-store.ts`, `ui/text-editor.ts` | Pluggable text rendering, immutable revisions and autosaved page drafts |
+| `text.ts`, `ui/content-renderers.ts` | Shared Markdown/math rendering and trusted format adapters |
+| `storage/object-store.ts`, `ui/text-editor.ts`, `ui/page-objects.ts` | Immutable content, autosaved object drafts and positioned content/region layer |
 | `ui/page-navigation.ts`, `ui/notebook-location.ts` | Numbered navigation and disposable location preference |
 | `ui/page-surface.ts` | Fit/zoom/layout and cancellable PDF background rendering |
 | `pdf/source.ts`, `pdf/library.ts` | Content backend contract, URL reading, digest policy and PDF.js cache |
