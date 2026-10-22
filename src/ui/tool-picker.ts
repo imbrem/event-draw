@@ -3,6 +3,10 @@ import type { Tool } from '../model.ts';
 const TOOLS: { id: Tool; label: string; name: string; description: string; icon: string }[] = [
   { id: 'pen', label: 'Pen', name: 'Pen', description: 'Draw ink',
     icon: '<path d="m4 16-1 5 5-1L20 8a2.1 2.1 0 0 0-4-4L4 16Zm10-10 4 4M4 16l4 4"/>' },
+  { id: 'highlighter', label: 'Highlight', name: 'Highlighter', description: 'Draw wide translucent ink',
+    icon: '<path d="m6 15 8-11 6 5-9 10H6v-4ZM6 19l-3 3h8M12 7l6 5"/>' },
+  { id: 'restyle', label: 'Restyle', name: 'Restyle on touch', description: 'Apply current color and width to ink you touch',
+    icon: '<path d="m9 14 9-11 3 3-10 10M9 14c-5-2-7 2-6 7 4 1 8-1 8-5Z"/>' },
   { id: 'erase-parts', label: 'Erase parts', name: 'Erase parts', description: 'Cut away only the ink you touch',
     icon: '<path d="m4 13 8-9a2 2 0 0 1 3 0l5 5a2 2 0 0 1 0 3l-8 9H8l-4-4a3 3 0 0 1 0-4Zm4-4 9 9M16 21h5"/>' },
   { id: 'erase-strokes', label: 'Erase strokes', name: 'Erase whole strokes', description: 'Delete each whole shape you touch',

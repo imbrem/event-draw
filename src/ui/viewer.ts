@@ -119,10 +119,13 @@ export class DatabaseViewer {
     }
     pre.textContent = JSON.stringify(decoded, null, 2);
     detail.append(heading);
+    const preview = document.createElement('div');
+    detail.append(preview, pre);
     if (this.table === 'stroke_events' && row.data_version === 1) {
-      this.preview = new StrokePreview(detail, JSON.parse(String(row.data_json)) as InkData);
+      const outputs = await this.client.outputs(Number(row.id));
+      if (!detail.contains(pre)) return;
+      this.preview = new StrokePreview(preview, JSON.parse(String(row.data_json)) as InkData, outputs);
     }
-    detail.append(pre);
     if (this.table === 'app_events') {
       const related = await this.client.related(Number(row.id));
       if (!detail.contains(pre)) return; // selection changed while querying

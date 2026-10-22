@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "declaration": true,
+    "outDir": "dist/core",
+    "rootDir": "src",
+    "rewriteRelativeImportExtensions": true,
+    "lib": ["ES2023"],
+    "types": ["node"]
+  },
+  "files": ["src/core.ts"],
+  "include": [],
+  "exclude": []
+}

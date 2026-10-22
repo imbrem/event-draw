@@ -3,12 +3,17 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "exports": {
+    "./core": { "types": "./dist/core/core.d.ts", "import": "./dist/core/core.js" },
+    "./schema.sql": "./dist/core/schema.sql"
+  },
   "engines": {
     "node": ">=24"
   },
   "scripts": {
     "dev": "vite --host 0.0.0.0",
-    "build": "tsc --noEmit && vite build",
+    "build": "tsc --noEmit && vite build && pnpm build:core",
+    "build:core": "tsc -p tsconfig.core.json && cp src/schema.sql dist/core/schema.sql",
     "preview": "vite preview --host 0.0.0.0",
     "test": "node --disable-warning=ExperimentalWarning --test tests/*.test.ts",
     "test:browser": "playwright test",
@@ -16,10 +21,14 @@
   },
   "dependencies": {
     "@sqlite.org/sqlite-wasm": "3.54.1-build1",
+    "katex": "^0.19.0",
+    "markdown-it": "^15.0.3",
     "pdfjs-dist": "^6.4.299"
   },
   "devDependencies": {
     "@playwright/test": "^1.64.1",
+    "@types/katex": "^0.16.8",
+    "@types/markdown-it": "^14.2.0",
     "@types/node": "^26.6.5",
     "typescript": "^7.0.2",
     "vite": "^8.3.5"

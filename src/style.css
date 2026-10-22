@@ -51,6 +51,19 @@ summary::-webkit-details-marker { display: none; }
 main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 #notebook-panel { flex: 1; min-height: 0; display: flex; flex-direction: column; position: relative; }
 .page-viewport { flex: 1; min-height: 0; overflow: auto; }
+.notebook-workspace { display: flex; flex: 1; min-height: 0; min-width: 0; position: relative; }
+.notebook-workspace .page-viewport { min-width: 0; }
+#text-panel { display: flex; flex-direction: column; width: 420px; max-width: 50%; min-height: 0; background: #fffefa; border-left: 1px solid #d9ded7; }
+.text-header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px; font-size: 12px; }
+#text-status { margin-right: auto; color: #71817c; font-size: 10px; }
+.text-source-label { display: flex; flex-direction: column; align-items: stretch; padding: 0 12px; color: #71817c; }
+#text-source { width: 100%; height: 24vh; resize: vertical; min-height: 100px; padding: 10px; color: #203b42; background: white; border: 1px solid #d9ded7; border-radius: 6px; font: 12px/1.6 ui-monospace, monospace; }
+.markdown-preview { flex: 1; min-height: 80px; overflow: auto; overflow-wrap: anywhere; padding: 12px 18px; font-size: 14px; line-height: 1.6; }
+.markdown-preview h1 { font-size: 24px; } .markdown-preview h2 { font-size: 20px; }
+.markdown-preview pre { font-size: 12px; } .markdown-preview blockquote { margin-left: 0; padding-left: 14px; border-left: 3px solid #b6c9bd; }
+.markdown-preview .katex { font-size: 1.1em; }
+#ink-policies label { justify-content: space-between; margin: 8px 0; }
+.ink-settings-panel { max-height: calc(100dvh - 160px); overflow: auto; }
 .page-frame { display: flex; width: max-content; min-width: 100%; min-height: 100%; padding: 12px; }
 .paper { position: relative; margin: auto; flex: none; background: white; box-shadow: 0 1px 8px #203b4215; }
 .paper canvas { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
@@ -91,13 +104,19 @@ pre { max-width: 100%; overflow: auto; font: 10px/1.5 ui-monospace, monospace; p
 .database-diagnostics p { font-size: 11px; line-height: 1.6; color: #637c7b; margin-bottom: 0; }
 .replay-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .replay-status { font-size: 12px; font-variant-numeric: tabular-nums; }
+.raw-comparison { display: flex; flex-wrap: wrap; gap: 16px; }
+.raw-comparison figure { margin: 0 0 12px; }
+.raw-comparison figcaption, .output-status { font-size: 12px; color: #637c7b; margin-bottom: 8px; }
+.record-detail details { max-width: 340px; margin: 12px 0; }
+.record-detail details label { justify-content: space-between; margin: 8px 0; }
 @media (max-width: 720px) {
+  #text-panel { position: absolute; inset: 0; z-index: 4; width: 100%; max-width: none; border: 0; }
   .app-bar { padding: 6px 8px; gap: 6px; }
   .mark, #save-state { display: none; }
   #document { flex: 1; max-width: 150px; }
   #page-navigation { margin-left: auto; gap: 2px; }
   .ink-dock { gap: 4px; padding: 5px; }
-  .tool-picker { flex: 1; justify-content: center; gap: 1px; }
+  .tool-picker { flex: 1 0 100%; justify-content: center; gap: 1px; flex-wrap: wrap; }
   .tool-picker button { flex-direction: column; gap: 4px; padding: 5px 7px; font-size: 10px; min-height: 54px; }
   .tool-picker button span { max-width: 47px; }
   .ink-dock > button, #ink-settings summary { font-size: 10px; padding: 6px; }

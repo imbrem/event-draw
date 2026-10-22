@@ -1,7 +1,8 @@
 import { captureSession } from './capture.ts';
 import { DatabaseClient, type Initialized } from './database.ts';
 import { download } from './download.ts';
-import { lassoShapes, selectionBounds } from './geometry.ts';
+import { selectionBounds } from './geometry.ts';
+import { interactionPolicies, DEFAULT_TOUCH } from './interactions.ts';
 import { EMPTY_STATE, measuredSamples, type Document, type Gesture, type Page, type State } from './model.ts';
 import { PAGE_PRESETS, PageViews } from './pages.ts';
 import { PdfLibrary } from './pdf/library.ts';
@@ -13,6 +14,8 @@ import { NotebookLocation } from './ui/notebook-location.ts';
 import { mountShell, element } from './ui/shell.ts';
 import { DatabaseViewer } from './ui/viewer.ts';
 import { ToolPicker } from './ui/tool-picker.ts';
+import { InkControls, PaintControls } from './ui/ink-controls.ts';
+import { TextEditor } from './ui/text-editor.ts';
 
 export function startApp(): () => void {
   mountShell();
@@ -31,8 +34,19 @@ export function startApp(): () => void {
   const pages = () => state.pages.filter((p) => p.document_id === documentId);
   const page = (): Page | undefined => pages().find((p) => p.id === pageId);
   const shapes = () => state.shapes.filter((s) => s.page_id === pageId);
-  const selectPage = (id: number) => { selected.clear(); pageId = id; refresh(); };
+  const selectPage = (id: number) => { void textEditor.flush(); selected.clear(); pageId = id; refresh(); };
   const tools = new ToolPicker(element('tool-picker'), () => { selected.clear(); refresh(); });
+  const paints = new PaintControls(element('color'), element('width'));
+  const inkControls = new InkControls(element('ink-policies'));
+  const lassoLabels: Record<string, string> = { 'touch-or-enclose@1': 'Touch or enclose', 'vertices-inside@1': 'All vertices inside' };
+  for (const [id] of interactionPolicies.lassos) element<HTMLSelectElement>('lasso-policy').add(new Option(lassoLabels[id] ?? id, id));
+  const textEditor = new TextEditor(element('text-panel'), {
+    async save(targetPage, format, source) {
+      await edit(() => db.setText(targetPage, format, source));
+      if (failed) throw new Error('Database write failed; export unsaved drafts before resetting.');
+    },
+    changed: () => refresh(), closed: () => showText(false),
+  });
   const navigation = new PageNavigation(element('page-navigation'), selectPage);
   const viewer = new DatabaseViewer(element('viewer-panel'), db);
   const surface = new PageSurface(element('page-viewport'), element('paper'), element('pdf-canvas'), pdfs, (status, value) => {
@@ -45,10 +59,12 @@ export function startApp(): () => void {
     return page()?.kind === 'whiteboard' ? { ...box, height: box.width / surface.aspect } : box;
   };
   const gesture = (tool: Gesture['tool']): Gesture => ({ pageId, tool,
-    style: { color: element<HTMLInputElement>('color').value, lineWidth: Number(element<HTMLInputElement>('width').value) },
+    style: paints.style(tool === 'move-selection' ? 'lasso' : tool),
+    policy: inkControls.value,
+    interaction: tool === 'restyle' ? DEFAULT_TOUCH : { id: element<HTMLSelectElement>('lasso-policy').value, options: {} },
     radius: Number(element<HTMLInputElement>('radius').value), cancelled: false, data: { deliveries: [] } });
   const notebook = new NotebookCanvas(canvas, {
-    canStart: () => ready && !failed && !resetting && !importing && background === 'ready' && (tools.value === 'pen' || writes === 0),
+    canStart: () => ready && !failed && !resetting && !importing && background === 'ready' && (tools.value === 'pen' || tools.value === 'highlighter' || writes === 0),
     touchEnabled: () => element<HTMLInputElement>('touch').checked,
     tool: () => tools.value, gesture, view,
     scene: () => ({ shapes: shapes(), pending: pending.filter((g) => g.pageId === pageId), view: view(),
@@ -69,7 +85,7 @@ export function startApp(): () => void {
         predictedSamples: input.data.deliveries.reduce((n, d) => n + d.predicted.length, 0),
         lastReported: last.reported, status: input.cancelled ? 'cancelled' : 'complete' }, null, 2);
       edit(() => db.gesture(input, sessionId), () => {
-        if (!input.cancelled && input.tool === 'lasso') selected = new Set(lassoShapes(shapes(), measuredSamples(input.data)).map((s) => s.id));
+        if (!input.cancelled && input.tool === 'lasso') selected = new Set(interactionPolicies.select(shapes(), measuredSamples(input.data), input.interaction));
         pending = pending.filter((item) => item !== input); unsaved = unsaved.filter((item) => item !== input);
       });
     },
@@ -79,6 +95,7 @@ export function startApp(): () => void {
     notice.textContent = value instanceof Error ? value.message : String(value);
   }
   function chooseDocument(id: number) {
+    void textEditor.flush();
     documentId = id; pageId = pages()[0]?.id ?? 0; selected.clear(); refresh();
   }
   function refresh() {
@@ -86,9 +103,12 @@ export function startApp(): () => void {
     const busy = !ready || failed || active || writes > 0 || resetting || importing;
     const board = page()?.kind === 'whiteboard', pdf = Boolean(currentDocument()?.pdf_hash);
     tools.update({ disabled: busy, whiteboard: board });
+    paints.select(tools.value);
+    inkControls.update(busy);
+    textEditor.update(pageId, state.texts.find((t) => t.page_id === pageId), !ready || failed || active || resetting || importing);
     navigation.update(pages(), pageId, busy);
     for (const id of ['document', 'document-name', 'rename-document', 'new-document', 'pdf-file', 'pdf-url', 'import-url',
-      'page-size', 'add-page', 'color', 'width', 'radius', 'touch', 'zoom-in', 'zoom-out', 'home-view']) {
+      'page-size', 'add-page', 'color', 'width', 'radius', 'touch', 'zoom-in', 'zoom-out', 'home-view', 'toggle-text', 'lasso-policy']) {
       (element(id) as HTMLInputElement | HTMLButtonElement | HTMLSelectElement).disabled = busy;
     }
     element<HTMLButtonElement>('undo').disabled = busy || !state.undoablePages.includes(pageId);
@@ -96,7 +116,7 @@ export function startApp(): () => void {
     element<HTMLButtonElement>('delete-page').disabled = busy || pdf || pages().length <= 1;
     element<HTMLButtonElement>('page-earlier').disabled = busy || pdf || page()?.page_number === 1;
     element<HTMLButtonElement>('page-later').disabled = busy || pdf || page()?.page_number === pages().length;
-    for (const id of ['delete-selection', 'deselect']) element<HTMLButtonElement>(id).disabled = busy || !selected.size;
+    for (const id of ['delete-selection', 'deselect', 'apply-processing']) element<HTMLButtonElement>(id).disabled = busy || !selected.size;
     element('selection-controls').hidden = tools.value !== 'lasso';
     element('selection-count').textContent = selected.size + ' selected';
     element<HTMLButtonElement>('export-full').disabled = !ready || active || writes > 0 || importing;
@@ -104,10 +124,10 @@ export function startApp(): () => void {
     for (const id of ['reset-settings', 'reset-local', 'export-existing']) {
       element<HTMLButtonElement>(id).disabled = active || writes > 0 || !ownsDatabase || resetting || importing;
     }
-    element('recover').hidden = !failed || !unsaved.length;
+    element('recover').hidden = !failed || (!unsaved.length && !textEditor.dirty);
     element('counts').textContent = shapes().length + ' visible · ' + state.rawCount + ' raw strokes · ' + state.eventCount + ' events';
     element('save-state').textContent = failed ? 'Could not save' : !ready ? 'Not open' : importing ? 'Importing PDF…' :
-      active ? 'Drawing' : writes ? 'Saving…' : background === 'loading' ? 'Loading PDF…' : background === 'error' ? 'PDF unavailable' : 'Saved';
+      active ? 'Drawing' : writes ? 'Saving…' : textEditor.dirty ? 'Unsaved text' : background === 'loading' ? 'Loading PDF…' : background === 'error' ? 'PDF unavailable' : 'Saved';
     documentSelect.replaceChildren(...state.documents.map((d) => new Option(d.name || 'Blank notes', String(d.id), false, d.id === documentId)));
     const documentKey = documentId + ':' + currentDocument()?.name;
     if (documentKey !== shownDocument) {
@@ -119,9 +139,10 @@ export function startApp(): () => void {
     element('blank-page-controls').hidden = pdf;
     if (ready) location.write(documentId, pageId);
     element('board-controls').hidden = !board;
-    element('color-control').hidden = tools.value !== 'pen';
-    element('width-control').hidden = tools.value !== 'pen';
-    element('eraser-control').hidden = !tools.value.startsWith('erase');
+    const painting = ['pen', 'highlighter', 'restyle'].includes(tools.value);
+    element('color-control').hidden = !painting;
+    element('width-control').hidden = !painting;
+    element('eraser-control').hidden = !tools.value.startsWith('erase') && tools.value !== 'restyle';
     const box = view(); canvas.dataset.viewWidth = String(box.width); canvas.dataset.viewHeight = String(box.height);
     element('view-position').textContent = 'x ' + Math.round(box.x) + ', y ' + Math.round(box.y) + ' · ' + Math.round(100000 / box.width) + '%';
     surface.update(page(), currentDocument()); notebook.repaint();
@@ -160,7 +181,7 @@ export function startApp(): () => void {
     if (!confirm('Delete all local documents, PDFs, pages, captures and edit history? Export anything you want to keep first.')) return;
     resetting = true; refresh();
     try {
-      await operations; views.clear(); selected.clear(); documentId = 1; pageId = 1;
+      await operations; textEditor.clear(); views.clear(); selected.clear(); documentId = 1; pageId = 1;
       await open(await db.reset(session)); setTab('notebook');
     } catch (value) { error(value); }
     finally { resetting = false; refresh(); }
@@ -168,6 +189,7 @@ export function startApp(): () => void {
   function setTab(name: string) {
     if (active) return;
     viewer.hide();
+    void textEditor.flush();
     tab = name; options.open = false;
     document.querySelectorAll<HTMLButtonElement>('[data-tab]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.tab === name)));
     element('notebook-panel').hidden = name !== 'notebook'; element('viewer-panel').hidden = name === 'notebook';
@@ -180,15 +202,28 @@ export function startApp(): () => void {
   }
   document.querySelectorAll<HTMLButtonElement>('[data-tab]').forEach((b) => b.onclick = () => setTab(b.dataset.tab!));
   element('return-notebook').onclick = () => setTab('notebook');
+  function showText(open: boolean) {
+    element('text-panel').hidden = !open;
+    element('toggle-text').setAttribute('aria-expanded', String(open));
+    if (!open) void textEditor.flush();
+  }
+  element('toggle-text').onclick = () => showText(Boolean(element('text-panel').hidden));
   documentSelect.onchange = () => chooseDocument(Number(documentSelect.value));
   element('rename-document').onclick = () => {
     const name = element<HTMLInputElement>('document-name').value;
     void edit(() => db.renameDocument(documentId, name), undefined, false);
   };
   element('new-document').onclick = () => { void edit(() => db.createDocument('Notes'), () => chooseDocument(state.documents.at(-1)!.id)); };
-  element('undo').onclick = () => { void edit(() => db.undo(pageId)); };
+  element('undo').onclick = () => {
+    const targetPage = pageId;
+    void textEditor.flush().then(() => edit(() => db.undo(targetPage)));
+  };
   element('clear').onclick = () => { void edit(() => db.clear(pageId)); };
   element('delete-selection').onclick = () => { void edit(() => db.deleteShapes(pageId, [...selected]), () => selected.clear()); };
+  element('apply-processing').onclick = () => {
+    const policy = inkControls.value, ids = [...selected], targetPage = pageId;
+    void edit(() => db.reprocess(targetPage, ids, policy), () => selected.clear());
+  };
   element('deselect').onclick = () => { selected.clear(); refresh(); };
   element('add-page').onclick = () => {
     const { width, height } = PAGE_PRESETS.find((p) => p.id === element<HTMLSelectElement>('page-size').value)!;
@@ -198,6 +233,7 @@ export function startApp(): () => void {
   for (const [id, action] of [['page-earlier', 'earlier'], ['page-later', 'later'], ['delete-page', 'delete']] as const) {
     element(id).onclick = () => {
       if (action === 'delete' && !confirm('Delete this blank page and its annotations from the current document? This page operation has no Undo yet. Full-history export retains the records.')) return;
+      void textEditor.flush();
       void edit(() => db.changePage(pageId, action));
     };
   }
@@ -205,6 +241,8 @@ export function startApp(): () => void {
     if (!ready || importing || active || writes) return;
     importing = true; notice.hidden = true; refresh();
     try {
+      await textEditor.flushAll(); await operations;
+      if (failed) throw new Error('Save text drafts before importing a PDF.');
       const { bytes, name } = await load();
       if (bytes.length > MAX_PDF_BYTES) throw new Error('PDF exceeds the 200 MiB import limit');
       const hash = await identifyPdf(bytes), pdfPages = await pdfs.inspect(bytes);
@@ -224,7 +262,9 @@ export function startApp(): () => void {
   };
   element('pdf-url-form').onsubmit = (event) => { event.preventDefault(); void importPdf(() => readPdfUrl(element<HTMLInputElement>('pdf-url').value)); };
   async function exportDb(kind: 'full' | 'visible') {
-    try { await operations; download(await db.export(kind), 'application/vnd.sqlite3', 'event-draw-' + kind + '.sqlite3'); document.querySelector<HTMLDetailsElement>('.export-menu')!.open = false; }
+    try { await textEditor.flushAll(); await operations; download(await db.export(kind), 'application/vnd.sqlite3', 'event-draw-' + kind + '.sqlite3'); document.querySelector<HTMLDetailsElement>('.export-menu')!.open = false;
+      if (textEditor.dirty) error('SQLite contains saved records only. Use Export unsaved input to keep the text drafts too.');
+    }
     catch (value) { error(value); }
   }
   element('export-full').onclick = () => { void exportDb('full'); };
@@ -232,16 +272,16 @@ export function startApp(): () => void {
   element('export-existing').onclick = () => { void exportDb('full'); };
   element('reset-local').onclick = () => { void reset(); };
   element('reset-settings').onclick = () => { void reset(); };
-  element('recover').onclick = () => download(JSON.stringify({ session, gestures: unsaved }, null, 2), 'application/json', 'event-draw-unsaved.json');
+  element('recover').onclick = () => download(JSON.stringify({ session, gestures: unsaved, textDrafts: textEditor.recovery() }, null, 2), 'application/json', 'event-draw-unsaved.json');
   function zoom(factor: number) { if (page()?.kind === 'whiteboard') views.zoom(page()!, 1 / factor); else surface.scale(factor); refresh(); }
   element('zoom-in').onclick = () => zoom(1.25);
   element('zoom-out').onclick = () => zoom(0.8);
   element('home-view').onclick = () => { views.reset(pageId); surface.reset(); refresh(); };
-  const unload = (event: BeforeUnloadEvent) => { if (active || writes || unsaved.length || importing) event.preventDefault(); };
+  const unload = (event: BeforeUnloadEvent) => { if (active || writes || unsaved.length || importing || textEditor.dirty) event.preventDefault(); };
   window.addEventListener('beforeunload', unload);
   void db.init(session).then(open).catch((value) => {
     failed = true; error(value); element('storage').textContent = 'Notebook could not open'; element('recovery-actions').hidden = false; refresh();
   });
   refresh();
-  return () => { viewer.hide(); surface.close(); notebook.close(); pdfs.close(); db.close(); window.removeEventListener('beforeunload', unload); };
+  return () => { textEditor.close(); viewer.hide(); surface.close(); notebook.close(); pdfs.close(); db.close(); window.removeEventListener('beforeunload', unload); };
 }

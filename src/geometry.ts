@@ -1,4 +1,5 @@
 import { measuredSamples, type InkData, type Point, type Range, type ViewBox, type VisibleShape } from './model.ts';
+import { sliceInk, type InkPoint, type InkOutput } from './ink.ts';
 
 const EPS = 1e-8;
 export function interpolate(a: Point, b: Point, t: number): Point {
@@ -15,12 +16,14 @@ export function slicePath(points: Point[], start: number, end: number): Point[] 
   if (end > start) result.push(pointAt(points, end));
   return result;
 }
-export function rawPoints(shape: VisibleShape): Point[] {
-  return shape.data_version === 1 ? measuredSamples(JSON.parse(shape.data_json) as InkData) : [];
+export function outputPoints(shape: VisibleShape): InkPoint[] {
+  return shape.output_version === 1 ? (JSON.parse(shape.output_json) as InkOutput).points : [];
+}
+export function shapeInk(shape: VisibleShape, range: Range = [shape.start_index, shape.end_index]): InkPoint[] {
+  return sliceInk(outputPoints(shape), ...range).map((p) => ({ ...p, x: p.x + shape.offset_x, y: p.y + shape.offset_y }));
 }
 export function shapePath(shape: VisibleShape, range: Range = [shape.start_index, shape.end_index]): Point[] {
-  return slicePath(rawPoints(shape), ...range)
-    .map((p) => ({ x: p.x + shape.offset_x, y: p.y + shape.offset_y }));
+  return shapeInk(shape, range).map(({ x, y }) => ({ x, y }));
 }
 export function distanceToSegment(p: Point, a: Point, b: Point): number {
   const dx = b.x - a.x, dy = b.y - a.y, length = dx * dx + dy * dy;
@@ -37,15 +40,22 @@ function linearBand(value: number, delta: number, lo: number, hi: number): Range
   const a = (lo - value) / delta, b = (hi - value) / delta;
   return intersect([Math.min(a, b), Math.max(a, b)], [0, 1]);
 }
-function circleInterval(p: Point, q: Point, center: Point, radius: number): Range | null {
+function circleIntervals(p: Point, q: Point, center: Point, radius: number, endRadius: number): Range[] {
   const dx = q.x - p.x, dy = q.y - p.y, x = p.x - center.x, y = p.y - center.y;
-  const a = dx * dx + dy * dy;
-  if (a < EPS * EPS) return Math.hypot(x, y) <= radius ? [0, 1] : null;
-  const b = 2 * (x * dx + y * dy), c = x * x + y * y - radius * radius;
-  const discriminant = b * b - 4 * a * c;
-  if (discriminant < 0) return null;
-  const root = Math.sqrt(discriminant);
-  return intersect([(-b - root) / (2 * a), (-b + root) / (2 * a)], [0, 1]);
+  const dr = endRadius - radius;
+  const a = dx * dx + dy * dy - dr * dr;
+  const b = 2 * (x * dx + y * dy - radius * dr), c = x * x + y * y - radius * radius;
+  const roots: number[] = [];
+  if (Math.abs(a) < EPS) { if (Math.abs(b) > EPS) roots.push(-c / b); }
+  else {
+    const discriminant = b * b - 4 * a * c;
+    if (discriminant >= 0) { const root = Math.sqrt(discriminant); roots.push((-b - root) / (2 * a), (-b + root) / (2 * a)); }
+  }
+  const cuts = [0, ...roots.filter((t) => t > 0 && t < 1), 1].sort((a, b) => a - b), result: Range[] = [];
+  const inside = (t: number) => (a * t + b) * t + c <= EPS;
+  for (let i = 0; i < cuts.length - 1; i++) if (inside((cuts[i] + cuts[i + 1]) / 2)) result.push([cuts[i], cuts[i + 1]]);
+  for (const t of cuts) if (inside(t)) result.push([t, t]);
+  return result;
 }
 function merge(ranges: Range[]): Range[] {
   const result: Range[] = [];
@@ -57,32 +67,35 @@ function merge(ranges: Range[]): Range[] {
   return result;
 }
 /** Parameter intervals inside a swept capsule, including sparse segment crossings. */
-function capsuleIntervals(p: Point, q: Point, a: Point, b: Point, radius: number): Range[] {
-  const ranges = [circleInterval(p, q, a, radius), circleInterval(p, q, b, radius)];
+function capsuleIntervals(p: Point, q: Point, a: Point, b: Point, radius: number, endRadius = radius): Range[] {
+  const ranges: (Range | null)[] = [...circleIntervals(p, q, a, radius, endRadius), ...circleIntervals(p, q, b, radius, endRadius)];
   const dx = b.x - a.x, dy = b.y - a.y, length = Math.hypot(dx, dy);
   if (length > EPS) {
     const ux = dx / length, uy = dy / length;
     const x = p.x - a.x, y = p.y - a.y, vx = q.x - p.x, vy = q.y - p.y;
-    ranges.push(intersect(
+    const normal = -x * uy + y * ux, deltaNormal = -vx * uy + vy * ux, dr = endRadius - radius;
+    ranges.push(intersect(intersect(
       linearBand(x * ux + y * uy, vx * ux + vy * uy, 0, length),
-      linearBand(-x * uy + y * ux, -vx * uy + vy * ux, -radius, radius),
-    ));
+      linearBand(normal - radius, deltaNormal - dr, -Infinity, 0)),
+      linearBand(-normal - radius, -deltaNormal - dr, -Infinity, 0)));
   }
   return ranges.filter((range): range is Range => range !== null);
 }
 /** Clip a polyline against the union of swept circular eraser areas. */
-export function remainingRanges(points: Point[], range: Range, eraser: Point[], radius: number): Range[] {
+export function remainingRanges(points: Point[], range: Range, eraser: Point[], radius: number, radii?: number[]): Range[] {
   if (!points.length || !eraser.length) return [range];
   const segments = eraser.length === 1 ? [[eraser[0], eraser[0]]] :
     eraser.slice(1).map((p, i) => [eraser[i], p]);
   if (range[0] === range[1]) {
     const point = pointAt(points, range[0]);
-    return segments.some(([a, b]) => distanceToSegment(point, a, b) <= radius) ? [] : [range];
+    const i = Math.floor(range[0]), t = range[0] - i;
+    const extra = radii ? radii[i] + (radii[Math.min(i + 1, radii.length - 1)] - radii[i]) * t : 0;
+    return segments.some(([a, b]) => distanceToSegment(point, a, b) <= radius + extra) ? [] : [range];
   }
   const removed: Range[] = [];
   for (let i = Math.floor(range[0]); i < range[1]; i++) {
     for (const [a, b] of segments) {
-      for (const interval of capsuleIntervals(points[i], points[i + 1], a, b, radius)) {
+      for (const interval of capsuleIntervals(points[i], points[i + 1], a, b, radius + (radii?.[i] ?? 0), radius + (radii?.[i + 1] ?? 0))) {
         const clipped = intersect([i + interval[0], i + interval[1]], range);
         if (clipped) removed.push(clipped);
       }
@@ -101,10 +114,11 @@ export interface Erasure { shape: VisibleShape; ranges: Range[] }
 export function planErasure(shapes: VisibleShape[], path: Point[], radius: number, whole: boolean): Erasure[] {
   const result: Erasure[] = [];
   for (const shape of shapes) {
-    const points = rawPoints(shape).map((p) => ({ x: p.x + shape.offset_x, y: p.y + shape.offset_y }));
+    const output = outputPoints(shape);
+    const points = output.map((p) => ({ x: p.x + shape.offset_x, y: p.y + shape.offset_y }));
     if (!points.length) continue;
     const range: Range = [shape.start_index, shape.end_index];
-    const ranges = remainingRanges(points, range, path, radius + shape.line_width / 2);
+    const ranges = remainingRanges(points, range, path, radius, output.map((p) => p.widthFactor * shape.line_width / 2));
     if (ranges.length !== 1 || ranges[0][0] !== range[0] || ranges[0][1] !== range[1]) {
       result.push({ shape, ranges: whole ? [] : ranges });
     }
@@ -112,7 +126,7 @@ export function planErasure(shapes: VisibleShape[], path: Point[], radius: numbe
   return result;
 }
 
-function insidePolygon(p: Point, polygon: Point[]): boolean {
+export function insidePolygon(p: Point, polygon: Point[]): boolean {
   let inside = false;
   for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
     const a = polygon[i], b = polygon[j];
@@ -133,19 +147,19 @@ export function lassoShapes(shapes: VisibleShape[], polygon: Point[]): VisibleSh
   })) return [];
   const edges = polygon.map((p, i) => [p, polygon[(i + 1) % polygon.length]]);
   return shapes.filter((shape) => {
-    const points = shapePath(shape);
+    const points = shapeInk(shape);
     if (points.some((p) => insidePolygon(p, polygon))) return true;
     for (let i = 0; i < points.length; i++) {
       const p = points[i], q = points[Math.min(i + 1, points.length - 1)];
-      if (edges.some(([a, b]) => capsuleIntervals(p, q, a, b, shape.line_width / 2).length)) return true;
+      if (edges.some(([a, b]) => capsuleIntervals(p, q, a, b, shape.line_width * p.widthFactor / 2, shape.line_width * q.widthFactor / 2).length)) return true;
     }
     return false;
   });
 }
 export function selectionBounds(shapes: VisibleShape[]): ViewBox | null {
   let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-  for (const shape of shapes) for (const p of shapePath(shape)) {
-    const r = shape.line_width / 2;
+  for (const shape of shapes) for (const p of shapeInk(shape)) {
+    const r = shape.line_width * p.widthFactor / 2;
     minX = Math.min(minX, p.x - r); maxX = Math.max(maxX, p.x + r);
     minY = Math.min(minY, p.y - r); maxY = Math.max(maxY, p.y + r);
   }

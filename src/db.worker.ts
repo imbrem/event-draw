@@ -89,6 +89,9 @@ scope.onmessage = async ({ data: request }) => {
       case 'readPdf': value = journal.readPdf(request.payload); break;
       case 'clear': value = journal.clear(request.payload); break;
       case 'deleteShapes': value = journal.deleteShapes(request.payload.pageId, request.payload.shapeIds); break;
+      case 'reprocess': value = journal.reprocess(request.payload.pageId, request.payload.shapeIds, request.payload.policy); break;
+      case 'outputs': value = journal.outputs(request.payload); break;
+      case 'setText': value = journal.setText(request.payload.pageId, request.payload.format, request.payload.source); break;
       case 'undo': value = journal.undo(request.payload); break;
       case 'browse':
         value = journal.browse(request.payload.table as ViewerTable, request.payload.offset) satisfies BrowseResult; break;

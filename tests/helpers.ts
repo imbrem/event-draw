@@ -3,6 +3,8 @@ import { DatabaseSync } from 'node:sqlite';
 import { Journal } from '../src/journal.ts';
 import type { Gesture, Sample } from '../src/model.ts';
 import type { Row, SqlDatabase } from '../src/storage/sql.ts';
+import type { InkProcessors } from '../src/ink.ts';
+import type { InteractionPolicies } from '../src/interactions.ts';
 
 export const schema = readFileSync(new URL('../src/schema.sql', import.meta.url), 'utf8');
 export function adapter(native: DatabaseSync): SqlDatabase {
@@ -11,11 +13,11 @@ export function adapter(native: DatabaseSync): SqlDatabase {
     all(sql, bind = []) { return native.prepare(sql).all(...bind) as Row[]; },
   };
 }
-export function database() {
+export function database(processors?: InkProcessors, interactions?: InteractionPolicies) {
   const native = new DatabaseSync(':memory:');
   const db = adapter(native);
   db.exec(schema);
-  const journal = new Journal(db);
+  const journal = new Journal(db, processors, interactions);
   const sessionId = journal.startSession({
     startedAt: '2026-10-22T00:00:00Z', source: 'test', timeOriginMs: 123,
     userAgent: 'test', devicePixelRatio: 2, capabilities: { pressureMeasurement: 'unknown' },

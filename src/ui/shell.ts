@@ -52,26 +52,30 @@ export function mountShell() {
   </header>
   <div id="notice" role="status" hidden></div>
   <div id="recovery-actions" hidden><button id="export-existing">Export existing SQLite</button><button id="reset-local">Reset local notebook</button></div>
-  <button id="recover" hidden>Export unsaved gestures (JSON)</button>
+  <button id="recover" hidden>Export unsaved input (JSON)</button>
   <main>
     <section id="notebook-panel">
-      <div id="page-viewport" class="page-viewport"><div class="page-frame">
+      <div class="notebook-workspace"><div id="page-viewport" class="page-viewport"><div class="page-frame">
         <div id="paper" class="paper"><canvas id="pdf-canvas" aria-label="PDF page background" hidden></canvas><canvas id="canvas" aria-label="Drawing page"></canvas></div>
-      </div></div>
+      </div></div><aside id="text-panel" aria-label="Page text notes" hidden></aside></div>
       <div class="ink-dock" aria-label="Drawing tools">
         <div id="tool-picker" class="tool-picker" role="group" aria-label="Tools"></div>
         <button id="undo" disabled>Undo</button>
+        <button id="toggle-text" aria-expanded="false" aria-controls="text-panel">Text</button>
         <details id="ink-settings"><summary>Ink & actions</summary><div class="ink-settings-panel">
           <label id="color-control">Ink <input id="color" type="color" value="#203b42" aria-label="Ink color"></label>
-          <label id="width-control">Width <input id="width" type="range" min="1" max="12" value="3" aria-label="Pen width"></label>
+          <label id="width-control">Width <input id="width" type="range" min="1" max="32" value="3" aria-label="Pen width"></label>
+          <div id="ink-policies"></div>
+          <label>Lasso <select id="lasso-policy" aria-label="Lasso policy"></select></label>
           <label id="eraser-control" hidden>Size <input id="radius" type="range" min="3" max="50" value="12" aria-label="Eraser radius"></label>
           <label><input id="touch" type="checkbox" checked> Finger drawing</label>
-          <button id="clear">Clear page</button>
+          <button id="clear">Clear ink</button>
         </div></details>
         <div class="zoom-controls"><button id="zoom-out" aria-label="Zoom out">−</button><button id="zoom-in" aria-label="Zoom in">+</button><button id="home-view">Fit page</button></div>
       </div>
       <div id="selection-controls" class="selection-controls" hidden>
         <span id="selection-count">0 selected</span><button id="delete-selection">Delete selected</button><button id="deselect">Deselect</button>
+        <button id="apply-processing">Apply ink policies</button>
         <span>Loop to select. Drag inside the selection to move.</span>
       </div>
       <div id="board-controls" hidden><span id="view-position"></span></div>

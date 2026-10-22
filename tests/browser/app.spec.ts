@@ -211,7 +211,7 @@ test('narrow touch layout preserves cancelled pen observations without displayin
   await page.goto('/');
   await expect(page.locator('#save-state')).toHaveText('Saved');
   const tools = page.getByRole('group', { name: 'Tools', exact: true });
-  await expect(tools.getByRole('button')).toHaveCount(5);
+  await expect(tools.getByRole('button')).toHaveCount(7);
   for (const button of await tools.getByRole('button').all()) {
     expect((await button.boundingBox())!.height).toBeGreaterThanOrEqual(44);
   }
@@ -572,4 +572,190 @@ test('database diagnostics and timestamped raw replay are read-only and cancel o
     expect(after.prepare('SELECT * FROM stroke_events').all()).toEqual(raw);
     expect(after.prepare('SELECT count(*) AS n FROM app_events').get()!.n).toBe(1);
   } finally { after.close(); }
+});
+
+async function penTrace(page: Page) {
+  await expect(page.locator('#save-state')).toHaveText('Saved');
+  await page.locator('#canvas').evaluate((canvas) => {
+    const capture = canvas.setPointerCapture;
+    canvas.setPointerCapture = () => {};
+    try {
+      const c = canvas as HTMLCanvasElement, rect = canvas.getBoundingClientRect();
+      const points = [[100, 160, .1], [200, 200, .9], [300, 130, .2], [400, 160, 0]];
+      points.forEach(([x, y, pressure], i) => {
+        const type = i === 0 ? 'pointerdown' : i === points.length - 1 ? 'pointerup' : 'pointermove';
+        const event = new PointerEvent(type, { pointerId: 77, pointerType: 'pen', isPrimary: true, bubbles: true,
+          clientX: rect.left + x / Number(c.dataset.viewWidth) * rect.width,
+          clientY: rect.top + y / Number(c.dataset.viewHeight) * rect.height,
+          button: 0, buttons: type === 'pointerup' ? 0 : 1, pressure });
+        Object.defineProperty(event, 'timeStamp', { value: 1000 + i * 1000 });
+        canvas.dispatchEvent(event);
+      });
+    } finally { canvas.setPointerCapture = capture; }
+  });
+  await expect(page.locator('#save-state')).toHaveText('Saved');
+}
+
+test('pressure output and per-trace experimental comparison replay without writing history', async ({ page }) => {
+  await page.goto('/');
+  await penTrace(page);
+  const before = await exported(page);
+  const original = before.prepare('SELECT * FROM stroke_events').all();
+  try {
+    const output = JSON.parse(before.prepare('SELECT data_json FROM ink_outputs').get()!.data_json as string);
+    expect(output.points.map((p: { widthFactor: number }) => p.widthFactor)).toEqual(expect.arrayContaining([
+      expect.closeTo(.48, 5), expect.closeTo(1.52, 5), expect.closeTo(.61, 5),
+    ]));
+  } finally { before.close(); }
+  await tab(page, 'raw');
+  const raw = page.getByLabel('Neutral raw stroke preview'), processed = page.getByLabel('Processed stroke preview');
+  await expect(processed).toHaveAttribute('data-replayed-samples', '4');
+  const unsmoothed = await processed.screenshot();
+  await page.getByText('Try a processor on this trace', { exact: true }).click();
+  await page.getByLabel('Preview Smoothing policy').selectOption('moving-average@1');
+  await page.getByRole('button', { name: 'Preview policies', exact: true }).click();
+  await expect(page.locator('.output-status')).toHaveText('Experimental preview · not saved');
+  expect(await processed.screenshot()).not.toEqual(unsmoothed);
+  await page.getByLabel('Replay speed').selectOption('4');
+  await page.getByRole('button', { name: 'Replay stroke', exact: true }).click();
+  await expect(raw).toHaveAttribute('data-replayed-samples', '1');
+  await expect(processed).toHaveAttribute('data-replayed-samples', '1');
+  await expect(page.locator('.replay-status')).toHaveText('Replay complete');
+  await page.screenshot({ path: 'test-results/processing-comparison.png', fullPage: true });
+  await page.locator('#return-notebook').click();
+  const after = await exported(page);
+  try {
+    expect(after.prepare('SELECT * FROM stroke_events').all()).toEqual(original);
+    expect(after.prepare('SELECT count(*) AS n FROM ink_outputs').get()!.n).toBe(1);
+    expect(after.prepare('SELECT count(*) AS n FROM app_events').get()!.n).toBe(1);
+  } finally { after.close(); }
+});
+
+test('highlighter has uniform per-contact translucency and touch restyling retains trace/output identity', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.locator('#save-state')).toHaveText('Saved');
+  await page.getByRole('button', { name: 'Highlighter', exact: true }).click();
+  await stroke(page);
+  const alphas = await page.locator('#canvas').evaluate((element) => {
+    const c = element as HTMLCanvasElement, context = c.getContext('2d')!;
+    return [120, 250, 400].map((x) => context.getImageData(Math.round(x / Number(c.dataset.viewWidth) * c.width),
+      Math.round(150 / Number(c.dataset.viewHeight) * c.height), 1, 1).data[3]);
+  });
+  for (const alpha of alphas) expect(Math.abs(alpha - .28 * 255)).toBeLessThan(2);
+  const before = await exported(page), original = before.prepare('SELECT * FROM visible_shapes').get()!;
+  const raw = before.prepare('SELECT * FROM stroke_events').all(); before.close();
+  expect(original.opacity).toBe(.28); expect(original.line_width).toBe(24);
+  await page.getByRole('button', { name: 'Restyle on touch', exact: true }).click();
+  await page.locator('#ink-settings').evaluate((e) => { (e as HTMLDetailsElement).open = true; });
+  await page.locator('#color').fill('#dd2233');
+  await stroke(page, [[300, 100], [300, 200]]);
+  const after = await exported(page);
+  try {
+    const shape = after.prepare('SELECT * FROM visible_shapes').get()!;
+    expect(shape.color).toBe('#dd2233'); expect(shape.opacity).toBe(1);
+    expect(shape.id).toBe(original.id); expect(shape.output_id).toBe(original.output_id);
+    expect(after.prepare('SELECT * FROM stroke_events WHERE id=1').all()).toEqual(raw);
+    expect(after.prepare('SELECT kind FROM app_events ORDER BY id DESC LIMIT 1').get()!.kind).toBe('shape.touch');
+  } finally { after.close(); }
+  await page.locator('#undo').click();
+  await expect(page.locator('#save-state')).toHaveText('Saved');
+  const undone = await exported(page);
+  try { expect(undone.prepare('SELECT * FROM visible_shapes').get()).toEqual(original); }
+  finally { undone.close(); }
+});
+
+test('selected traces get a new immutable processing version as one undoable edit', async ({ page }) => {
+  await page.goto('/'); await penTrace(page);
+  await page.getByRole('button', { name: 'Lasso select', exact: true }).click();
+  await stroke(page, [[80, 100], [450, 100], [450, 230], [80, 230], [80, 100]]);
+  await expect(page.locator('#selection-count')).toHaveText('1 selected');
+  await page.locator('#ink-settings').evaluate((e) => { (e as HTMLDetailsElement).open = true; });
+  await page.getByLabel('Smoothing policy', { exact: true }).selectOption('moving-average@1');
+  await page.getByLabel('Lasso policy').selectOption('vertices-inside@1');
+  await page.locator('#ink-settings').evaluate((e) => { (e as HTMLDetailsElement).open = false; });
+  await page.locator('#apply-processing').click();
+  await expect(page.locator('#selection-count')).toHaveText('0 selected');
+  const current = await exported(page), compact = await exported(page, '#export-visible');
+  try {
+    expect(current.prepare('SELECT count(*) AS n FROM ink_outputs').get()!.n).toBe(2);
+    expect(current.prepare('SELECT kind FROM app_events ORDER BY id DESC LIMIT 1').get()!.kind).toBe('ink.reprocess');
+    expect(compact.prepare('SELECT * FROM visible_shapes').all()).toEqual(current.prepare('SELECT * FROM visible_shapes').all());
+    expect(compact.prepare('SELECT count(*) AS n FROM ink_outputs').get()!.n).toBe(1);
+    expect(current.prepare('SELECT output_id FROM visible_shapes').get()!.output_id).toBe(2);
+  } finally { current.close(); compact.close(); }
+  await page.locator('#undo').click(); await expect(page.locator('#save-state')).toHaveText('Saved');
+  const undone = await exported(page);
+  try { expect(undone.prepare('SELECT output_id FROM visible_shapes').get()!.output_id).toBe(1); }
+  finally { undone.close(); }
+});
+
+test('Markdown/math notes autosave, survive page changes and reload, export drafts immediately, and undo', async ({ page }) => {
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  page.on('response', (response) => { if (response.status() >= 400) errors.push(response.status() + ' ' + response.url()); });
+  await page.goto('/'); await expect(page.locator('#save-state')).toHaveText('Saved');
+  await page.locator('#toggle-text').click();
+  const source = page.getByRole('textbox', { name: 'Markdown note', exact: true });
+  await source.fill('# Variables\n\n**Given** $x=5$\n\n<script>alert(1)</script>');
+  await expect(page.locator('#text-preview h1')).toHaveText('Variables');
+  await expect(page.locator('#text-preview strong')).toHaveText('Given');
+  await expect(page.locator('#text-preview .katex')).toHaveCount(1);
+  await expect(page.locator('#text-preview script')).toHaveCount(0);
+  await expect(page.locator('#text-status')).toHaveText('Saved');
+  await source.fill('# Latest\n$2x=10$');
+  const immediate = await exported(page); // flushes without waiting for debounce
+  try { expect(immediate.prepare('SELECT source FROM visible_texts').get()!.source).toBe('# Latest\n$2x=10$'); }
+  finally { immediate.close(); }
+  await menu(page); await page.locator('#add-page').click(); await menu(page, false);
+  await expect(page.locator('#page-number')).toHaveValue('2'); await expect(source).toHaveValue('');
+  await source.fill('Second page');
+  // Navigation flushes a dirty draft, preserving its page association.
+  await page.locator('#previous-page').click();
+  await expect(source).toHaveValue('# Latest\n$2x=10$');
+  await expect(page.locator('#save-state')).toHaveText('Saved');
+  await page.locator('#next-page').click(); await expect(source).toHaveValue('Second page');
+  await page.locator('#undo').click(); await expect(source).toHaveValue('');
+  await page.locator('#previous-page').click();
+  await page.reload(); await expect(page.locator('#save-state')).toHaveText('Saved');
+  await page.locator('#toggle-text').click(); await expect(source).toHaveValue('# Latest\n$2x=10$');
+  const full = await exported(page), compact = await exported(page, '#export-visible');
+  try {
+    expect(compact.prepare('SELECT * FROM visible_texts').all()).toEqual(full.prepare('SELECT * FROM visible_texts').all());
+    expect(full.prepare('SELECT count(*) AS n FROM stroke_events').get()!.n).toBe(0);
+    expect(compact.prepare('SELECT count(*) AS n FROM text_contents').get()!.n).toBe(1);
+  } finally { full.close(); compact.close(); }
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(source).toBeVisible(); await expect(page.locator('#close-text')).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth && document.documentElement.scrollHeight <= innerHeight)).toBe(true);
+  await page.screenshot({ path: 'test-results/markdown-math-mobile.png', fullPage: true });
+  await page.locator('#close-text').click(); await expect(source).toBeHidden();
+  expect(errors).toEqual([]);
+});
+
+test('typing during an in-flight text save commits the latest draft without losing edits', async ({ page }) => {
+  await page.addInitScript(() => {
+    const post = Worker.prototype.postMessage;
+    Worker.prototype.postMessage = function (message: unknown, options?: StructuredSerializeOptions | Transferable[]) {
+      const send = () => post.call(this, message, Array.isArray(options) ? { transfer: options } : options);
+      if (message && typeof message === 'object' && 'method' in message && message.method === 'setText') setTimeout(send, 350);
+      else send();
+    };
+  });
+  await page.goto('/'); await expect(page.locator('#save-state')).toHaveText('Saved');
+  await page.locator('#toggle-text').click();
+  const source = page.getByRole('textbox', { name: 'Markdown note', exact: true });
+  await source.fill('First draft'); await page.locator('#save-text').click();
+  await expect(page.locator('#text-status')).toHaveText('Saving…');
+  await expect(source).toBeEnabled();
+  await source.fill('Latest **during save** $x=5$');
+  await expect(page.locator('#text-status')).toHaveText('Saved');
+  await expect(page.locator('#save-state')).toHaveText('Saved');
+  const full = await exported(page);
+  try {
+    expect(full.prepare('SELECT source FROM visible_texts').get()!.source).toBe('Latest **during save** $x=5$');
+    expect(full.prepare('SELECT count(*) AS n FROM text_contents').get()!.n).toBe(2);
+  } finally { full.close(); }
+  await page.reload(); await expect(page.locator('#save-state')).toHaveText('Saved');
+  await page.locator('#toggle-text').click();
+  await expect(source).toHaveValue('Latest **during save** $x=5$');
 });

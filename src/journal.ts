@@ -2,9 +2,13 @@ import {
   localize, measuredSamples, type CaptureSession, type Gesture, type PdfImport,
   type State, type Style, type VisibleShape,
 } from './model.ts';
-import { gestureDelta, lassoShapes, planErasure } from './geometry.ts';
+import { gestureDelta, planErasure } from './geometry.ts';
 import { DocumentStore } from './storage/documents.ts';
 import { databaseDiagnostics } from './storage/diagnostics.ts';
+import { InkStore } from './storage/ink-store.ts';
+import { TextStore } from './storage/text-store.ts';
+import { interactionPolicies, type InteractionPolicies, DEFAULT_LASSO, DEFAULT_TOUCH } from './interactions.ts';
+import { DEFAULT_INK_POLICY, inkPointAt, outputIndex, type InkOutput, type InkPolicy, type InkProcessors } from './ink.ts';
 import {
   insertRow, scalar, transaction, VIEWER_TABLES,
   type BrowseResult, type Row, type SqlDatabase, type ViewerTable,
@@ -13,7 +17,7 @@ export type { Row, SqlDatabase, SqlValue } from './storage/sql.ts';
 
 interface EventOptions {
   documentId?: number; pageId?: number; rawId?: number; tool?: string; styleId?: number;
-  radius?: number; undoable?: boolean; undoOf?: number; data?: unknown;
+  radius?: number; policyId?: number; undoable?: boolean; undoOf?: number; data?: unknown;
 }
 interface Placement {
   id: number; page_id: number; style_id: number; offset_x: number;
@@ -24,8 +28,14 @@ interface Placement {
 export class Journal {
   private db: SqlDatabase;
   private documents: DocumentStore;
-  constructor(db: SqlDatabase) {
+  private ink: InkStore;
+  private text: TextStore;
+  private interactions: InteractionPolicies;
+  constructor(db: SqlDatabase, processors?: InkProcessors, interactions = interactionPolicies) {
     this.db = db;
+    this.ink = new InkStore(db, processors);
+    this.interactions = interactions;
+    this.text = new TextStore(db, (pageId) => this.event('text.set', { pageId, undoable: true }));
     this.documents = new DocumentStore(db, (kind, documentId, pageId, data) => {
       this.event(kind, { documentId, pageId, data });
     });
@@ -45,19 +55,19 @@ export class Journal {
       occurred_at: new Date().toISOString(), kind, document_id: options.documentId ?? null, page_id: options.pageId ?? null,
       raw_stroke_id: options.rawId ?? null, tool: options.tool ?? null,
       style_id: options.styleId ?? null, eraser_radius: options.radius ?? null,
+      policy_id: options.policyId ?? null,
       undoable: options.undoable ? 1 : 0, undo_of_event_id: options.undoOf ?? null,
       data_version: 1, data_json: JSON.stringify(options.data ?? {}),
     });
     return this.lastId();
   }
   private style(style: Style): number {
-    this.db.exec('INSERT OR IGNORE INTO styles (color, line_width) VALUES (?, ?)',
-      [style.color, style.lineWidth]);
-    return scalar(this.db, 'SELECT id FROM styles WHERE color = ? AND line_width = ?',
-      [style.color, style.lineWidth]);
+    const values = [style.color, style.lineWidth, style.opacity ?? 1, style.blendMode ?? 'source-over'];
+    this.db.exec('INSERT OR IGNORE INTO styles (color, line_width, opacity, blend_mode) VALUES (?, ?, ?, ?)', values);
+    return scalar(this.db, 'SELECT id FROM styles WHERE color = ? AND line_width = ? AND opacity = ? AND blend_mode = ?', values);
   }
-  private shape(rawId: number, start: number, end: number): number {
-    insertRow(this.db, 'shapes', { raw_stroke_id: rawId, start_index: start, end_index: end });
+  private shape(outputId: number, start: number, end: number): number {
+    insertRow(this.db, 'shapes', { output_id: outputId, start_index: start, end_index: end });
     return this.lastId();
   }
   private effect(eventId: number, shape: Placement, visible: boolean): void {
@@ -74,6 +84,7 @@ export class Journal {
   renameDocument(id: number, name: string): State { this.documents.rename(id, name); return this.state(); }
   importPdf(input: PdfImport): State { this.documents.importPdf(input); return this.state(); }
   readPdf(hash: string): Uint8Array { return this.documents.read(hash); }
+  setText(pageId: number, format: string, source: string): State { this.text.set(pageId, format, source); return this.state(); }
   changePage(pageId: number, action: 'earlier' | 'later' | 'delete'): State {
     this.documents.changePage(pageId, action); return this.state();
   }
@@ -87,21 +98,36 @@ export class Journal {
       const rawId = this.lastId();
       if (input.cancelled) {
         this.event('input.cancel', { pageId: input.pageId, rawId, tool: input.tool });
-      } else if (input.tool === 'pen') {
+      } else if (input.tool === 'pen' || input.tool === 'highlighter') {
         const styleId = this.style(input.style);
-        const end = Math.max(0, measuredSamples(data).length - 1);
-        const shapeId = this.shape(rawId, 0, end);
-        const eventId = this.event('stroke.add', {
-          pageId: input.pageId, rawId, tool: input.tool, styleId, undoable: true,
+        const { id: outputId, policyId, output } = this.ink.output(rawId, data, input.policy ?? DEFAULT_INK_POLICY);
+        const accepted = output.points.length > 0;
+        const eventId = this.event(accepted ? 'stroke.add' : 'input.reject', {
+          pageId: input.pageId, rawId, tool: input.tool, styleId, policyId, undoable: accepted,
+          data: { outputId, reason: output.rejected },
         });
-        this.effect(eventId, {
-          id: shapeId, page_id: input.pageId, style_id: styleId,
-          offset_x: origin.x, offset_y: origin.y, paint_order: shapeId,
-        }, true);
+        if (accepted) {
+          const shapeId = this.shape(outputId, 0, output.points.length - 1);
+          this.effect(eventId, {
+            id: shapeId, page_id: input.pageId, style_id: styleId,
+            offset_x: origin.x, offset_y: origin.y, paint_order: shapeId,
+          }, true);
+        }
       } else if (input.tool === 'lasso') {
-        const selected = lassoShapes(this.visible(input.pageId), measuredSamples(input.data));
-        const eventId = this.event('selection.lasso', { pageId: input.pageId, rawId, tool: input.tool });
+        const shapes = this.visible(input.pageId), ids = new Set(this.interactions.select(shapes, measuredSamples(input.data), input.interaction));
+        const selected = shapes.filter((s) => ids.has(s.id));
+        const eventId = this.event('selection.lasso', { pageId: input.pageId, rawId, tool: input.tool, data: { policy: input.interaction ?? DEFAULT_LASSO } });
         for (const shape of selected) this.effect(eventId, shape, true);
+      } else if (input.tool === 'restyle') {
+        const shapes = this.visible(input.pageId);
+        const edits = this.interactions.touch({ shapes, path: measuredSamples(input.data), radius: input.radius, style: input.style }, input.interaction);
+        const eventId = this.event('shape.touch', { pageId: input.pageId, rawId, tool: input.tool, undoable: edits.length > 0,
+          data: { policy: input.interaction ?? DEFAULT_TOUCH } });
+        const effects = new Map(edits.map((edit) => [edit.shapeId, edit]));
+        for (const shape of shapes) {
+          const edit = effects.get(shape.id);
+          if (edit) this.effect(eventId, { ...shape, style_id: this.style(edit.style) }, true);
+        }
       } else if (input.tool === 'move-selection') {
         const ids = new Set(input.shapeIds);
         const selected = this.visible(input.pageId).filter((shape) => ids.has(shape.id));
@@ -123,7 +149,7 @@ export class Journal {
         for (const { shape, ranges } of erasures) {
           this.effect(eventId, shape, false);
           for (const [start, end] of ranges) {
-            const id = this.shape(shape.raw_stroke_id, start, end);
+            const id = this.shape(shape.output_id, start, end);
             this.effect(eventId, { ...shape, id }, true);
           }
         }
@@ -137,6 +163,26 @@ export class Journal {
       if (shapes.length) {
         const eventId = this.event('page.clear', { pageId, undoable: true });
         for (const shape of shapes) this.effect(eventId, shape, false);
+      }
+      return this.state();
+    });
+  }
+  reprocess(pageId: number, shapeIds: number[], policy: InkPolicy): State {
+    return transaction(this.db, () => {
+      const ids = new Set(shapeIds), selected = this.visible(pageId).filter((s) => ids.has(s.id));
+      let eventId = 0;
+      for (const shape of selected) {
+        const { id, policyId, output } = this.ink.output(shape.raw_stroke_id, JSON.parse(shape.data_json), policy);
+        if (id === shape.output_id) continue;
+        if (!eventId) eventId = this.event('ink.reprocess', { pageId, policyId, undoable: true });
+        this.effect(eventId, shape, false);
+        if (!output.points.length) continue;
+        const previous = (JSON.parse(shape.output_json) as InkOutput).points;
+        const from = inkPointAt(previous, shape.start_index).sourceIndex, to = inkPointAt(previous, shape.end_index).sourceIndex;
+        // A plugin may discard endpoints. Do not extend the retained source range.
+        if (from > output.points.at(-1)!.sourceIndex || to < output.points[0].sourceIndex) continue;
+        const next = this.shape(id, outputIndex(output.points, from), outputIndex(output.points, to));
+        this.effect(eventId, { ...shape, id: next }, true);
       }
       return this.state();
     });
@@ -174,6 +220,7 @@ export class Journal {
           offset_x: Number(state.offset_x), offset_y: Number(state.offset_y), paint_order: Number(state.paint_order),
         }, previous ? previous.visible === 1 : false);
       }
+      this.text.undo(eventId, Number(target.id));
       return this.state();
     });
   }
@@ -185,6 +232,7 @@ export class Journal {
     return {
       documents: this.documents.all(), pages: this.documents.pages(),
       shapes: this.visible(),
+      texts: this.text.visible(),
       rawCount: scalar(this.db, 'SELECT count(*) FROM stroke_events'),
       eventCount: scalar(this.db, 'SELECT count(*) FROM app_events'),
       undoablePages: [...new Set(this.undoCandidates().map((row) => Number(row.page_id)))],
@@ -196,16 +244,22 @@ export class Journal {
     if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
       throw new Error('Invalid pagination');
     }
-    const order = table === 'app_event_shapes' ? 'app_event_id DESC, shape_id' : table === 'assets' ? 'hash' : 'id DESC';
+    const order = table === 'app_event_shapes' ? 'app_event_id DESC, shape_id' : table === 'app_event_texts' ? 'app_event_id DESC, page_id' :
+      table === 'visible_texts' ? 'page_id' : table === 'assets' ? 'hash' : 'id DESC';
     const columns = table === 'assets' ? 'hash, media_type, byte_length' : '*';
     return { table, offset, total: scalar(this.db, 'SELECT count(*) FROM ' + table),
       rows: this.db.all('SELECT ' + columns + ' FROM ' + table + ' ORDER BY ' + order + ' LIMIT ? OFFSET ?', [limit, offset]) };
   }
   related(eventId: number): Row[] {
     return this.db.all(`
-      SELECT e.*, s.raw_stroke_id, s.start_index, s.end_index, t.color, t.line_width
+      SELECT e.*, o.raw_stroke_id, s.output_id, s.start_index, s.end_index, t.color, t.line_width
       FROM app_event_shapes e JOIN shapes s ON s.id = e.shape_id
+      JOIN ink_outputs o ON o.id = s.output_id
       JOIN styles t ON t.id = e.style_id WHERE e.app_event_id = ? ORDER BY e.shape_id`, [eventId]);
+  }
+  outputs(rawId: number): Row[] {
+    return this.db.all(`SELECT o.*, p.config_json FROM ink_outputs o JOIN ink_policies p ON p.id = o.policy_id
+      WHERE o.raw_stroke_id = ? ORDER BY o.id DESC`, [rawId]);
   }
   /** Retain raw dependencies, derived ranges, styles and page/placement state. */
   snapshotInto(target: SqlDatabase): void {
@@ -220,15 +274,20 @@ export class Journal {
           ON r.capture_session_id = c.id JOIN visible_shapes v ON v.raw_stroke_id = r.id`],
         ['stroke_events', 'SELECT DISTINCT r.* FROM stroke_events r JOIN visible_shapes v ON v.raw_stroke_id = r.id'],
         ['styles', 'SELECT DISTINCT t.* FROM styles t JOIN visible_shapes v ON v.style_id = t.id'],
+        ['ink_policies', 'SELECT DISTINCT p.* FROM ink_policies p JOIN ink_outputs o ON o.policy_id = p.id JOIN visible_shapes v ON v.output_id = o.id'],
+        ['ink_outputs', 'SELECT DISTINCT o.* FROM ink_outputs o JOIN visible_shapes v ON v.output_id = o.id'],
         ['shapes', 'SELECT s.* FROM shapes s JOIN visible_shapes v ON v.id = s.id'],
+        ['text_contents', 'SELECT DISTINCT c.* FROM text_contents c JOIN visible_texts v ON v.content_id = c.id'],
       ];
       for (const [table, sql] of queries) for (const row of this.db.all(sql)) insertRow(target, table, row);
       const journal = new Journal(target);
       const baseline = journal.event('history.baseline');
       for (const shape of this.visible()) journal.effect(baseline, shape, true);
+      for (const text of this.text.visible()) journal.text.effect(baseline, text.page_id, text.content_id);
       if (JSON.stringify(this.visible()) !== JSON.stringify(journal.visible())) {
         throw new Error('Snapshot validation failed: visible state changed');
       }
+      if (JSON.stringify(this.text.visible()) !== JSON.stringify(journal.text.visible())) throw new Error('Snapshot validation failed: text changed');
     });
   }
 }

@@ -1,6 +1,7 @@
-import { measuredSamples, type Gesture, type Point, type Tool, type ViewBox, type VisibleShape } from './model.ts';
-import { gestureDelta, planErasure, selectionBounds, shapePath } from './geometry.ts';
-import { drawPath, prepareCanvas } from './ui/drawing.ts';
+import { localize, measuredSamples, type Gesture, type Point, type Tool, type ViewBox, type VisibleShape } from './model.ts';
+import { gestureDelta, planErasure, selectionBounds, shapeInk } from './geometry.ts';
+import { drawInk, prepareCanvas } from './ui/drawing.ts';
+import { DEFAULT_INK_POLICY, tryProcessInk } from './ink.ts';
 
 export interface Scene {
   shapes: VisibleShape[];
@@ -26,11 +27,11 @@ export function render(canvas: HTMLCanvasElement, scene: Scene) {
     eraser.radius, eraser.tool === 'erase-strokes').map((e) => [e.shape.id, e.ranges]) : []);
   for (const shape of shapes) {
     const ranges = erased.get(shape.id) ?? [[shape.start_index, shape.end_index] as [number, number]];
-    for (const range of ranges) drawPath(context, shapePath(shape, range), shape.color, shape.line_width);
+    for (const range of ranges) drawInk(context, shapeInk(shape, range), shape.color, shape.line_width, shape.opacity, shape.blend_mode);
   }
   const selected = new Set(scene.selected);
   const selectedShapes = shapes.filter((s) => selected.has(s.id));
-  for (const shape of selectedShapes) drawPath(context, shapePath(shape), '#3789a43b', shape.line_width + 5 * unit);
+  for (const shape of selectedShapes) drawInk(context, shapeInk(shape), '#3789a43b', shape.line_width + 5 * unit);
   const bounds = selectionBounds(selectedShapes);
   if (bounds) {
     context.save();
@@ -39,8 +40,13 @@ export function render(canvas: HTMLCanvasElement, scene: Scene) {
     context.restore();
   }
   for (const gesture of [...scene.pending, ...(scene.active ? [scene.active] : [])]) {
-    if (gesture.tool === 'pen' && !gesture.cancelled) {
-      drawPath(context, measuredSamples(gesture.data), gesture.style.color, gesture.style.lineWidth);
+    if ((gesture.tool === 'pen' || gesture.tool === 'highlighter') && !gesture.cancelled) {
+      // Experimental processors see the same local coordinates before and after
+      // commit, including processors that are not translation invariant.
+      const { data, origin } = localize(gesture.data);
+      const points = tryProcessInk(data, gesture.policy ?? DEFAULT_INK_POLICY).points
+        .map((p) => ({ ...p, x: p.x + origin.x, y: p.y + origin.y }));
+      drawInk(context, points, gesture.style.color, gesture.style.lineWidth, gesture.style.opacity, gesture.style.blendMode);
     }
   }
   if (scene.active?.tool === 'lasso') {
@@ -53,7 +59,7 @@ export function render(canvas: HTMLCanvasElement, scene: Scene) {
       context.stroke(); context.restore();
     }
   }
-  if (scene.hover && scene.tool.startsWith('erase')) {
+  if (scene.hover && (scene.tool.startsWith('erase') || scene.tool === 'restyle')) {
     context.beginPath();
     context.arc(scene.hover.x, scene.hover.y, scene.radius, 0, Math.PI * 2);
     context.fillStyle = '#6c8c8b22';

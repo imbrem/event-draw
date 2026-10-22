@@ -1,5 +1,5 @@
 PRAGMA foreign_keys = ON;
-PRAGMA user_version = 3;
+PRAGMA user_version = 4;
 
 -- Content IDs are opaque to readers. The current importer emits sha256:<hex>.
 CREATE TABLE IF NOT EXISTS assets (
@@ -54,14 +54,30 @@ CREATE TABLE IF NOT EXISTS styles (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   color TEXT NOT NULL,
   line_width REAL NOT NULL CHECK (line_width > 0),
-  UNIQUE (color, line_width)
+  opacity REAL NOT NULL CHECK (opacity > 0 AND opacity <= 1),
+  blend_mode TEXT NOT NULL CHECK (blend_mode IN ('source-over', 'multiply')),
+  UNIQUE (color, line_width, opacity, blend_mode)
 ) STRICT;
 
--- Derived shapes reference ranges of raw captures. Erasing never inserts
+CREATE TABLE IF NOT EXISTS ink_policies (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  config_json TEXT NOT NULL UNIQUE CHECK (json_valid(config_json))
+) STRICT;
+CREATE TABLE IF NOT EXISTS ink_outputs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  raw_stroke_id INTEGER NOT NULL REFERENCES stroke_events(id),
+  policy_id INTEGER NOT NULL REFERENCES ink_policies(id),
+  rejection_reason TEXT,
+  data_version INTEGER NOT NULL CHECK (data_version > 0),
+  data_json TEXT NOT NULL CHECK (json_valid(data_json)),
+  UNIQUE (raw_stroke_id, policy_id)
+) STRICT;
+
+-- Derived shapes reference ranges of processed output vertices. Erasing never inserts
 -- synthetic samples into stroke_events. Fractional indices interpolate.
 CREATE TABLE IF NOT EXISTS shapes (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  raw_stroke_id INTEGER NOT NULL REFERENCES stroke_events(id),
+  output_id INTEGER NOT NULL REFERENCES ink_outputs(id),
   start_index REAL NOT NULL CHECK (start_index >= 0),
   end_index REAL NOT NULL CHECK (end_index >= start_index)
 ) STRICT;
@@ -75,6 +91,7 @@ CREATE TABLE IF NOT EXISTS app_events (
   raw_stroke_id INTEGER REFERENCES stroke_events(id),
   tool TEXT,
   style_id INTEGER REFERENCES styles(id),
+  policy_id INTEGER REFERENCES ink_policies(id),
   eraser_radius REAL CHECK (eraser_radius > 0),
   undoable INTEGER NOT NULL DEFAULT 0 CHECK (undoable IN (0, 1)),
   undo_of_event_id INTEGER REFERENCES app_events(id),
@@ -107,12 +124,34 @@ WHERE NOT EXISTS (
 );
 
 CREATE VIEW IF NOT EXISTS visible_shapes AS
-SELECT s.id, s.raw_stroke_id, s.start_index, s.end_index,
+SELECT s.id, o.raw_stroke_id, s.output_id, s.start_index, s.end_index,
        e.page_id, e.style_id, e.offset_x, e.offset_y, e.paint_order,
-       t.color, t.line_width, r.data_version, r.data_json
+       t.color, t.line_width, t.opacity, t.blend_mode, r.data_version, r.data_json,
+       o.data_version AS output_version, o.data_json AS output_json
 FROM latest_shape_states e
 JOIN shapes s ON s.id = e.shape_id
-JOIN stroke_events r ON r.id = s.raw_stroke_id
+JOIN ink_outputs o ON o.id = s.output_id
+JOIN stroke_events r ON r.id = o.raw_stroke_id
 JOIN styles t ON t.id = e.style_id
 JOIN pages p ON p.id = e.page_id
 WHERE e.visible = 1 AND p.deleted = 0;
+
+-- Immutable source revisions; formatting is a renderer choice, never raw ink.
+CREATE TABLE IF NOT EXISTS text_contents (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  format TEXT NOT NULL CHECK (length(format) > 0),
+  source TEXT NOT NULL,
+  UNIQUE (format, source)
+) STRICT;
+CREATE TABLE IF NOT EXISTS app_event_texts (
+  app_event_id INTEGER NOT NULL REFERENCES app_events(id),
+  page_id INTEGER NOT NULL REFERENCES pages(id),
+  content_id INTEGER REFERENCES text_contents(id),
+  PRIMARY KEY (app_event_id, page_id)
+) STRICT;
+CREATE INDEX IF NOT EXISTS page_text_history ON app_event_texts(page_id, app_event_id DESC);
+CREATE VIEW IF NOT EXISTS visible_texts AS
+SELECT e.page_id, c.id AS content_id, c.format, c.source
+FROM app_event_texts e JOIN text_contents c ON c.id = e.content_id
+JOIN pages p ON p.id = e.page_id AND p.deleted = 0
+WHERE NOT EXISTS (SELECT 1 FROM app_event_texts later WHERE later.page_id = e.page_id AND later.app_event_id > e.app_event_id);

@@ -1,3 +1,4 @@
+import type { Algorithm, InkPolicy } from './ink.ts';
 /** Only sensor observations and coordinate transforms belong in raw stroke JSON. */
 export interface Point { x: number; y: number }
 export interface Sample extends Point {
@@ -34,14 +35,17 @@ export type Page = { id: number; document_id: number; page_number: number; sourc
   { kind: 'page'; width: number; height: number } |
   { kind: 'whiteboard'; width: null; height: null }
 );
-export interface Style { color: string; lineWidth: number }
-export type Tool = 'pen' | 'erase-parts' | 'erase-strokes' | 'lasso' | 'pan';
+export interface Style { color: string; lineWidth: number; opacity?: number; blendMode?: 'source-over' | 'multiply' }
+export interface VisibleText { page_id: number; content_id: number; format: string; source: string }
+export type Tool = 'pen' | 'highlighter' | 'restyle' | 'erase-parts' | 'erase-strokes' | 'lasso' | 'pan';
 export interface Gesture {
   pageId: number;
   tool: Exclude<Tool, 'pan'> | 'move-selection';
   /** App operation targets; never serialized into raw capture JSON. */
   shapeIds?: number[];
   style: Style;
+  policy?: InkPolicy;
+  interaction?: Algorithm;
   radius: number;
   cancelled: boolean;
   data: InkData;
@@ -49,11 +53,14 @@ export interface Gesture {
 export interface VisibleShape {
   id: number;
   raw_stroke_id: number;
+  output_id: number;
+  output_version: number; output_json: string;
   start_index: number; end_index: number;
   page_id: number; style_id: number;
   offset_x: number; offset_y: number;
   paint_order: number;
   color: string; line_width: number;
+  opacity: number; blend_mode: 'source-over' | 'multiply';
   data_version: number; data_json: string;
 }
 export interface CaptureSession {
@@ -65,12 +72,13 @@ export interface State {
   documents: Document[];
   pages: Page[];
   shapes: VisibleShape[];
+  texts: VisibleText[];
   rawCount: number;
   eventCount: number;
   undoablePages: number[];
 }
 export const EMPTY_STATE: State = {
-  documents: [], pages: [], shapes: [], rawCount: 0, eventCount: 0, undoablePages: [],
+  documents: [], pages: [], shapes: [], texts: [], rawCount: 0, eventCount: 0, undoablePages: [],
 };
 export type Range = [number, number];
 
