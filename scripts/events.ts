@@ -1,3 +1,4 @@
+import '../src/node-trace-codecs.ts';
 import { closeSync, openSync, readFileSync, unlinkSync, writeSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';

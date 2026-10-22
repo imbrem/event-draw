@@ -1,3 +1,4 @@
+import '../src/node-trace-codecs.ts';
 import { readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { Journal } from '../src/journal.ts';

@@ -1,8 +1,9 @@
+import '../src/node-trace-codecs.ts';
 import { closeSync, openSync, readFileSync, unlinkSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { Journal, type Row, type SqlDatabase } from '../src/journal.ts';
-import { SCHEMA_VERSION } from '../src/storage/schema.ts';
+import { requireSchemaIdentity } from '../src/storage/schema.ts';
 
 const flags = new Set(process.argv.slice(2).filter((v) => v.startsWith('--')));
 const [input, output] = process.argv.slice(2).filter((v) => !v.startsWith('--'));
@@ -31,8 +32,7 @@ let target: DatabaseSync | undefined;
 let created = false;
 let success = false;
 try {
-  const version = source.prepare('PRAGMA user_version').get()!.user_version;
-  if (version !== SCHEMA_VERSION) throw new Error('Unsupported schema version: ' + version);
+  requireSchemaIdentity(adapter(source));
   // Exclusive create: never overwrite an existing database.
   closeSync(openSync(output, 'wx'));
   created = true;

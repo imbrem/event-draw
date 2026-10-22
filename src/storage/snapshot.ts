@@ -1,4 +1,5 @@
 import { insertRow, transaction, type SqlDatabase } from './sql.ts';
+import { requireSchemaIdentity } from './schema.ts';
 import { recordEvent } from './events.ts';
 import { MUTABLE_TABLES } from './identity.ts';
 import { clearNotebookRows } from './notebooks.ts';
@@ -91,7 +92,7 @@ export function snapshotNotebook(
           insertRow(target, 'object_ids', row);
     for (const row of source.all('SELECT * FROM object_ids WHERE local_id IS NULL'))
       insertRow(target, 'object_ids', row);
-    const baseline = recordEvent(target, 'history.baseline');
+    const baseline = recordEvent(target, 'history.baseline', { data: { schema: requireSchemaIdentity(source) } });
     for (const { app_event_id: _id, ...row } of source.all(
       'SELECT * FROM latest_shape_states WHERE visible=1 AND shape_id IN (SELECT id FROM visible_shapes)',
     ))

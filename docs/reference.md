@@ -148,8 +148,11 @@ disabled during contact and while an edit is being saved.
   set position, dimensions and angle; **Show on page** toggles rendering.
   `math/latex` renders display math. HTML is escaped, remote images disabled,
   and TeX is rendered without trusted commands. This is a source editor with
-  previews, not WYSIWYG. With the text panel open, page objects expose Move, Resize
-  and Rotate handles. A completed drag appends one object edit; cancellation restores it.
+  previews, not WYSIWYG. Choose **A** (or **T**), tap the page and type directly.
+  Choose Markdown or plain text in the inline toolbar. Double-click or press Enter on
+  selected text to edit; drag the object to move, or use its resize/rotate handles.
+  A completed drag appends one object edit; cancellation restores it. **Notes** opens
+  the source/linked-notes panel, with advanced placement under **Properties**.
 - **Show detected boxes** under Ink & actions toggles translucent, rotated
   rectangle overlays. With Lasso active, tap a box label to select its constituent
   ink shapes. The baseline script recognizes closed outlines from one or several
@@ -166,11 +169,11 @@ disabled during contact and while an edit is being saved.
   App events show their referenced shape states.
 - **Raw strokes** displays capture records alongside a stored processing output.
   Both previews use neutral color/base width, without fragment erasing or
-  placement. **Try a processor on this trace → Preview policies** compares
+  placement. **Processor → Preview policies** compares
   experimental smoothing/pressure/speed/rejection without saving anything. Older
   stored outputs remain selectable after reprocessing.
-  **Replay stroke** animates the measured samples at their recorded timing,
-  with 0.25×, 1× or 4× speed and Stop. Missing sample clocks fall back to receipt
+  The **Play / Pause / Stop** icons animate measured samples at their recorded timing,
+  with a 0.25×–4× speed slider. Play resumes a paused replay; Stop restores the full capture. Missing sample clocks fall back to receipt
   clocks; regressions clamp forward and zero-duration captures appear instantly.
   Predictions stay excluded. Replay is display-frame limited and does not write
   to the database. Original and processed geometry replay together using the
@@ -181,8 +184,8 @@ disabled during contact and while an edit is being saved.
 
 Both database viewers include **Database diagnostics**, covering all documents:
 ink captures with any visible geometry, all raw captures used by visible ink,
-visible/total shapes, event/effect counts, document/page counts and raw JSON/embedded source
-payload sizes, rendered/linked content counts and active/total boxes with detector
+visible/total shapes, event/effect counts, document/page counts and stored raw/embedded source
+payload sizes and logical SQLite allocation (excluding WAL/browser overhead), rendered/linked content counts and active/total boxes with detector
 run/error counts. Visibility means *any fragment remains*, not a fraction of path
 length. Eraser/lasso/move/cancelled inputs contribute to the raw denominator,
 while ink captures are raw IDs referenced by shapes. Compaction changes the
@@ -286,12 +289,13 @@ implemented in this prototype. PDF.js fonts/decoders/worker are bundled locally.
 
 ## Identity and schema
 
-See [src/schema.sql](../src/schema.sql). The current schema version is **7**.
+See [src/schema.sql](../src/schema.sql). The current schema identity is a **256-bit UUID + SemVer `0.0.0`** ([details](trace-storage.md#notebook-schema-identity)).
 Earlier notebooks require export/reset; no backward migration is provided.
 
 | Table/view | Purpose |
 | --- | --- |
-| `stroke_events` | Immutable raw input gestures: ID, capture session, data version, observations JSON |
+| `schema_identity` | Fixed 256-bit schema family UUID + SemVer, also in notebook.create and JSONL headers |
+| `stroke_events` | Immutable raw input: ID, capture session, data version, codec, decoded length and compressed BLOB |
 | `ink_policies` | Immutable versioned smoothing, pressure/speed and rejection configuration |
 | `ink_outputs` | Immutable processed geometry, raw capture/policy references and separate rejection reason |
 | `shapes` | Geometry instances: ID, output ID, fractional output-vertex range |
@@ -322,10 +326,10 @@ to global notebook/timestamp identities; see the [identity rules](README.md#iden
 The exchange assigns all typed records a separate increasing sequence ID.
 
 A raw row represents an entire real contact, including erasing and cancelled
-contacts, not one pointer callback. Its JSON contains only observations:
+contacts, not one pointer callback. Its decoded value contains only observations:
 reported/coalesced/predicted deliveries, sample/receipt clocks, original browser
 measurements and coordinate transforms. No app tool, paint style, page ID,
-wall-clock edit time, or render placement is stored in the raw row.
+wall-clock edit time, or render placement is stored in the raw payload. [Encoding and compression](trace-storage.md) are pluggable.
 **Sample `width`/`height` mean sensor contact dimensions**, not painted width.
 Raw `pointerType`, `button` and `buttons` are browser measurements, distinct
 from the selected app tool.
@@ -606,7 +610,7 @@ pnpm detect event-draw-full.sqlite3 ./trusted-candidate.mjs
 ```
 
 The optional module default-exports a `BoxDetector` callback. Node 24 also accepts
-strip-compatible `.ts`. The command reads schema 7 without modifying the source
+strip-compatible `.ts`. The command reads the current schema UUID + version without modifying the source
 and prints per-page candidate JSON. A custom module's ID hashes that file's bytes;
 a future CAS bundle should cover the entire dependency closure. These are trusted
 synchronous callbacks, with the same no-preemption limitation as ink processors.

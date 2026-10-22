@@ -1,4 +1,6 @@
 /// <reference lib="webworker" />
+import { init as initZstd, compress, decompress } from '@bokuweb/zstd-wasm';
+import { cborZstdCodec, tracePayloads } from './trace-codecs.ts';
 import sqlite3InitModule, { type Database } from '@sqlite.org/sqlite-wasm';
 import schema from './schema.sql?raw';
 import { Journal } from './journal.ts';
@@ -27,6 +29,14 @@ function adapter(db: Database): SqlDatabase {
   };
 }
 async function openDatabase() {
+  await initZstd();
+  tracePayloads.codecs.set(
+    'cbor+zstd@1',
+    cborZstdCodec({
+      compress: (data) => compress(data, 3),
+      decompress: (data, size) => decompress(data, { defaultHeapSize: size }),
+    }),
+  );
   const sqlite = await sqlite3InitModule();
   let db: Database;
   let mode: 'persistent' | 'temporary' = 'persistent';

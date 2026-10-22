@@ -14,6 +14,10 @@ export function contentSource(data: unknown): string {
     : JSON.stringify(data, null, 2);
 }
 contentRenderers.set('text/markdown', (data, root) => renderText('markdown', contentSource(data), root));
+contentRenderers.set('text/plain', (data, root) => {
+  const text = document.createElement('div'); text.className = 'plain-text'; text.textContent = contentSource(data);
+  root.replaceChildren(text);
+});
 contentRenderers.set('math/latex', (data, root) => {
   root.innerHTML = katex.renderToString(contentSource(data), {
     displayMode: true,

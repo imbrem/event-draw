@@ -1,3 +1,4 @@
+import { tracePayloads } from '../src/trace-codecs.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { database, gesture, note } from './helpers.ts';
@@ -19,7 +20,7 @@ test('box script recognizes a closed rotated outline and keeps raw trace observa
       { kind: 'stroke.add', cause_event_id: null }, { kind: 'box.finish', cause_event_id: 3 },
     ]);
     assert.equal(d.db.all('SELECT status FROM detection_runs')[0].status, 'ok');
-    assert.doesNotMatch(String(d.db.all('SELECT data_json FROM stroke_events')[0].data_json), /box|detector|confidence/);
+    assert.doesNotMatch(JSON.stringify(tracePayloads.unpack(d.db.all('SELECT * FROM stroke_events')[0])), /box|detector|confidence/);
     const input = { pageId: 1, revision: 1, traces: detectionTraces(state.shapes) }, original = structuredClone(input);
     assert.equal(createBoxDetectors().run(input).length, 1); assert.deepEqual(input, original);
   } finally { d.close(); }

@@ -1,5 +1,12 @@
 PRAGMA foreign_keys = ON;
-PRAGMA user_version = 7;
+-- A 256-bit schema-family UUID and a SemVer, independent of notebook identity.
+-- PRAGMA user_version is intentionally unused.
+CREATE TABLE IF NOT EXISTS schema_identity (
+  id INTEGER PRIMARY KEY CHECK(id=1),
+  uuid TEXT NOT NULL CHECK(length(uuid)=64 AND uuid NOT GLOB '*[^0-9a-f]*'),
+  version TEXT NOT NULL
+) STRICT;
+INSERT OR IGNORE INTO schema_identity VALUES(1,'7f0cfa452687929ea325a82a41333105813ba9c52d382f7e29d325216afe79ff','0.0.0');
 
 -- Namespaces include self and foreign notebooks; integers are local aliases only.
 CREATE TABLE IF NOT EXISTS notebook_imports (
@@ -74,7 +81,9 @@ CREATE TABLE IF NOT EXISTS stroke_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   capture_session_id INTEGER REFERENCES capture_sessions(id),
   data_version INTEGER NOT NULL CHECK (data_version > 0),
-  data_json TEXT NOT NULL CHECK (json_valid(data_json))
+  data_codec TEXT NOT NULL,
+  decoded_bytes INTEGER NOT NULL CHECK(decoded_bytes>=0 AND decoded_bytes<=67108864),
+  data BLOB NOT NULL
 ) STRICT;
 
 CREATE TABLE IF NOT EXISTS styles (
@@ -176,7 +185,7 @@ WHERE NOT EXISTS (
 CREATE VIEW IF NOT EXISTS visible_shapes AS
 SELECT s.id, o.raw_stroke_id, s.output_id, s.start_index, s.end_index,
        e.page_id, e.style_id, e.offset_x, e.offset_y, e.scale, e.rotation, e.paint_order,
-       t.color, t.line_width, t.opacity, t.blend_mode, r.data_version, r.data_json,
+       t.color, t.line_width, t.opacity, t.blend_mode, r.data_version, r.data_codec, r.decoded_bytes, r.data,
        o.data_version AS output_version, o.data_json AS output_json
 FROM latest_shape_states e
 JOIN shapes s ON s.id = e.shape_id

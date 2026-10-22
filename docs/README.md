@@ -9,6 +9,7 @@ A research change to processing, exchange or UI should reuse the other boundarie
 
 | Boundary | Modules | Responsibility |
 | --- | --- | --- |
+| Trace encoding | `trace-codecs.ts`, `node-trace-codecs.ts`, `storage/raw-traces.ts` | Per-row codecs; CBOR + zstd by default, independent of observation schema |
 | Capture | `capture.ts`, `model.ts` | Preserve observations, optional fields, coalesced/predicted batches and clocks |
 | Processing | `ink.ts`, `plugins.ts`, `live-ink.ts` | Versioned smoothing/width/rejection and validated immutable outputs |
 | Interaction | `interactions.ts`, `geometry.ts` | Replaceable lasso and touch transforms; vector erasing |
@@ -71,7 +72,7 @@ flowchart LR
 
 SQLite retains normalized tables for efficient inspection and rendering. Exchange records
 make raw traces, processed traces, policies, identities, content, detections and edits all
-typed events in one output sequence. No paint or selected tool is added to raw trace JSON.
+typed events in one output sequence. No paint or selected tool is added to the decoded raw trace payload.
 Browser contact width/height, pointer type and buttons are observations, not paint settings.
 
 Raw local coordinates start at the contact's first measured point; placement is an edit.
@@ -151,7 +152,7 @@ A default record has `{id, type, refs, data}`:
   The decoder requires strictly increasing IDs. They are not timestamps or SQL/object IDs.
 - `refs` are dependency edges, never a `previous_event` chain. Some point forward; the current
   sink stages records before materialization. Preserve/remap references if changing IDs.
-- The first `notebook` record carries identity/import metadata, adapter/schema versions and
+- The first `notebook` record carries identity/import metadata, adapter ID, schema UUID + SemVer and
   local ID high-water marks. Resources are deduplicated; `app.edit` records carry edit rows
   and complete effects. Binary payloads use base64 `$bytes` values.
 - Resource order is serialization order; app edits retain their original journal order.
@@ -211,3 +212,28 @@ Use modules in trusted builds for now. Mount/update/cleanup errors are isolated 
 subscriptions cleaned up. This is an extension host, not a runtime script loader, untrusted
 sandbox, WASM loader or fully replaceable default shell. WASM/Rust implementations can later
 adapt these data boundaries without moving app-specific DOM into covalence.
+
+
+## Content, playback and status adapters
+
+- `content-codecs.ts`: encode/decode source text independently of its editor or renderer.
+  Markdown/plain text/LaTeX/SVG use `{source}`; unknown structured formats use JSON.
+- `ui/content-editors.ts`: trusted editor factories with value, focus, input and disposal.
+  Writing and monospace source styles share object drafts, autosaving and Journal events.
+- `ui/content-renderers.ts`: independent renderer registry, shared by page content and preview.
+- `playback.ts`: clock-injected play/pause/resume/stop/speed state; `ui/playback-controls.ts`
+  supplies embeddable icon controls. `ui/stroke-preview.ts` draws raw/output comparisons.
+- `ui/status-indicators.ts`: read-only footer projections; diagnostics reads are throttled and
+  errors isolated. `startApp({indicators: []})` hides them, or pass custom definitions:
+
+```ts
+startApp({ indicators: [{
+  id: 'page-objects',
+  read: ({ state, pageId }) => ({
+    text: state.objects.filter(object => object.page_id === pageId).length + ' objects',
+  }),
+}] });
+```
+
+The default footer shows logical SQLite allocation, app-event count and stored raw bytes.
+No diagnostic history is written. See [trace formats, schema identities and measured compression](trace-storage.md).

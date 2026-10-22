@@ -1,3 +1,5 @@
+import { tracePayloads } from './trace-codecs.ts';
+import { RawTraces } from './storage/raw-traces.ts';
 import { snapshotNotebook, type SnapshotOptions } from './storage/snapshot.ts';
 import { recordEvent, initializeNotebook, type EventOptions } from './storage/events.ts';
 import { identifyObject } from './storage/identity.ts';
@@ -63,6 +65,7 @@ interface Placement {
 
 /** Semantic operations are atomic and append-only; raw captures never change. */
 export class Journal {
+  private raw = new RawTraces();
   private db: SqlDatabase;
   private documents: DocumentStore;
   private ink: InkStore;
@@ -233,7 +236,7 @@ export class Journal {
       insertRow(this.db, 'stroke_events', {
         capture_session_id: sessionId,
         data_version: 1,
-        data_json: JSON.stringify(data),
+        ...tracePayloads.pack(data),
       });
       const rawId = this.lastId();
       if (input.cancelled) {
@@ -597,12 +600,9 @@ export class Journal {
           throw new Error('Invalid clipboard geometry');
         // Reuse immutable captures/outputs within this notebook; otherwise import
         // the original clock metadata and baked geometry, without rerunning plugins.
-        const rawJson = JSON.stringify(item.data),
-          config = policyJson(item.policy);
-        const existingRaw = this.db.all('SELECT * FROM stroke_events WHERE id=? AND data_json=?', [
-          old.raw_stroke_id,
-          rawJson,
-        ])[0];
+        const config = policyJson(item.policy);
+        const candidate = this.db.all('SELECT * FROM stroke_events WHERE id=?', [old.raw_stroke_id])[0];
+        const existingRaw = candidate && this.raw.matches(candidate, item.data) ? candidate : undefined;
         const localSession = existingRaw?.capture_session_id
           ? this.db.all('SELECT * FROM capture_sessions WHERE id=?', [existingRaw.capture_session_id])[0]
           : null;
@@ -640,7 +640,7 @@ export class Journal {
           insertRow(this.db, 'stroke_events', {
             capture_session_id: sourceSession,
             data_version: 1,
-            data_json: rawJson,
+            ...tracePayloads.pack(item.data),
           });
           rawId = this.lastId();
         }
@@ -687,10 +687,15 @@ export class Journal {
     });
   }
   visible(pageId?: number): VisibleShape[] {
-    return this.db.all(
+    const rows = this.db.all(
       'SELECT * FROM visible_shapes' + (pageId ? ' WHERE page_id = ?' : '') + ' ORDER BY paint_order, id',
       pageId ? [pageId] : [],
-    ) as unknown as VisibleShape[];
+    );
+    if (pageId === undefined) this.raw.retain(new Set(rows.map((row) => Number(row.raw_stroke_id))));
+    return rows.map((row) => {
+      const { data_codec, decoded_bytes, data, ...fields } = row;
+      return { ...fields, data_json: this.raw.json(row) };
+    }) as unknown as VisibleShape[];
   }
   state(): State {
     if (!this.db.all('SELECT id FROM notebook_metadata').length)
@@ -751,10 +756,16 @@ export class Journal {
       table,
       offset,
       total: scalar(this.db, 'SELECT count(*) FROM ' + table),
-      rows: this.db.all('SELECT ' + columns + ' FROM ' + table + ' ORDER BY ' + order + ' LIMIT ? OFFSET ?', [
-        limit,
-        offset,
-      ]),
+      rows: this.db
+        .all('SELECT ' + columns + ' FROM ' + table + ' ORDER BY ' + order + ' LIMIT ? OFFSET ?', [
+          limit,
+          offset,
+        ])
+        .map((row) =>
+          table === 'stroke_events' || table === 'visible_shapes'
+            ? { ...row, decoded_json: this.raw.json(row) }
+            : row,
+        ),
     };
   }
   related(eventId: number): Row[] {

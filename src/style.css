@@ -72,13 +72,11 @@ main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .object-placement label { display: block; }
 .object-placement input { padding: 5px; }
 #delete-object { flex: none; margin: 8px 12px; align-self: start; }
-.page-objects { position: absolute; inset: 0 auto auto 0; pointer-events: none; transform-origin: 0 0; overflow: hidden; }
+.page-objects { position: absolute; inset: 0 auto auto 0; pointer-events: none; transform-origin: 0 0; overflow: visible; }
 .page-object, .detected-box { position: absolute; transform-origin: center; }
-.page-object { overflow: hidden; }
-.page-object.editing { outline: 1px dashed #527e86; }
+.page-object { overflow: visible; }
 .page-object .object-body { width: 100%; height: 100%; min-height: 0; padding: 8px; font-size: 24px; overflow: hidden; }
 .page-object h1 { font-size: 36px; } .page-object h2 { font-size: 30px; }
-.edit-page-object { position: absolute; right: 0; top: 0; pointer-events: auto; font-size: 14px; }
 .detected-box { background: #319cb318; border: 2px solid #319cb380; }
 .detected-box > button { position: absolute; top: -24px; left: 0; pointer-events: auto; font-size: 12px; padding: 2px 4px; white-space: nowrap; color: #235c68; background: #e7f4f5; }
 .width-formula { padding: 8px; margin: 8px 0; font-size: 11px; }
@@ -160,8 +158,6 @@ pre { max-width: 100%; overflow: auto; font: 10px/1.5 ui-monospace, monospace; p
 @media (pointer: coarse) { button, summary, select { min-height: 44px; } input, textarea { font-size: 16px; } }
 .page-object .object-body:has(> img) { padding: 0; }
 .object-body > img { display: block; width: 100%; height: 100%; object-fit: contain; }
-.object-handle { position: absolute; bottom: 0; pointer-events: auto; touch-action: none; font-size: 12px; min-height: 32px; }
-.object-move { left: 0; } .object-resize { right: 0; } .object-rotate { left: 40%; }
 #page-browser { width: min(800px, 95vw); max-height: 88dvh; border: 1px solid #d9ded7; border-radius: 12px; background: #f7f7f2; color: #203b42; }
 #page-browser::backdrop { background: #203b4259; }
 #page-browser header, #notebook-search-form { display: flex; gap: 10px; align-items: center; margin-bottom: 14px; }
@@ -181,3 +177,40 @@ pre { max-width: 100%; overflow: auto; font: 10px/1.5 ui-monospace, monospace; p
 .thumbnail-image .page-objects { width: 100%; height: 100%; }
 .pdf-text .markedContent { display: contents; }
 .pdf-text :is(span,br) { -webkit-user-select: text; user-select: text; }
+
+/* Editors and content formats are independent host adapters. */
+.text-modes { display: flex; gap: 12px; padding: 0 12px 8px; font-size: 12px; }
+.text-modes label { flex: 1; min-width: 0; }
+.text-modes select { width: 100%; }
+.object-advanced { flex: none; margin: 0 12px 8px; }
+.object-advanced > summary { color: #71817c; font-size: 12px; }
+.object-advanced .object-properties { padding: 8px 0; }
+.content-editor { display: block; width: 100%; height: 100%; resize: none; padding: 8px; border: 1px solid #527e86; border-radius: 4px; background: #fffefa; color: #203b42; font: inherit; line-height: 1.6; }
+.editor-source { font-family: ui-monospace, monospace; }
+#text-source.editor-writing { font: 16px/1.6 system-ui, sans-serif; }
+.text-source-label small { margin: 4px 0 8px; font-size: 11px; }
+.plain-text { white-space: pre-wrap; }
+.page-object.editing { pointer-events: auto; cursor: move; touch-action: none; }
+.page-object.editing:hover { outline: 1px dashed #527e86; }
+.page-object.selected { outline: 1.5px solid #397888; }
+.page-object.typing { cursor: text; }
+.page-object.typing .object-body { padding: 0; overflow: visible; }
+.page-object.typing .content-editor { min-height: 100%; }
+.page-object .object-body { border-radius: 2px; }
+.object-handle { position: absolute; pointer-events: auto; touch-action: none; width: 16px; height: 16px; min-height: 16px; padding: 0; border: 1.5px solid #397888; background: white; border-radius: 3px; }
+.object-resize { right: -8px; bottom: -8px; cursor: nwse-resize; }
+.object-rotate { left: calc(50% - 8px); top: -28px; bottom: auto; border-radius: 50%; cursor: grab; }
+@media (pointer: coarse) { .object-handle::after { content: ''; position: absolute; inset: -14px; } }
+.status-indicators { flex: none; display: flex; gap: 14px; padding: 3px 12px max(3px, env(safe-area-inset-bottom)); min-height: 22px; color: #657771; background: #f7f7f2; font: 10px/1.5 ui-monospace, monospace; overflow-x: auto; white-space: nowrap; }
+.replay-controls button { display: grid; place-items: center; width: 42px; height: 42px; padding: 9px; }
+.replay-controls svg { width: 20px; height: 20px; }
+.replay-speed { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.replay-speed input { width: 110px; min-width: 0; accent-color: #397888; }
+.replay-speed output { min-width: 36px; }
+.processor-menu { margin-top: 14px; }
+.processor-menu > summary { width: fit-content; padding: 6px 10px; border: 1px solid #d9ded7; border-radius: 6px; font-size: 12px; cursor: pointer; }
+.processor-menu > summary::after { content: ''; display: inline-block; width: 6px; height: 6px; margin: 0 2px 2px 10px; border-right: 1.5px solid; border-bottom: 1.5px solid; transform: rotate(45deg); }
+.processor-menu[open] > summary::after { transform: rotate(225deg); margin-bottom: -1px; }
+.processor-menu > select { margin-top: 10px; max-width: 100%; }
+.inline-text-toolbar { position: absolute; top: -40px; left: 0; display: flex; gap: 4px; white-space: nowrap; z-index: 2; }
+.inline-text-toolbar select, .inline-text-toolbar button { font-size: 14px; min-height: 36px; padding: 5px 8px; }

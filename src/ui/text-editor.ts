@@ -1,5 +1,7 @@
-import type { ObjectInput, PageObject } from '../model.ts';
-import { contentSource, renderContent } from './content-renderers.ts';
+import type { ObjectInput, PageObject, Point } from '../model.ts';
+import { renderContent } from './content-renderers.ts';
+import { contentCodec } from '../content-codecs.ts';
+import { contentEditors, type ContentEditor } from './content-editors.ts';
 
 interface Draft {
   input: ObjectInput;
@@ -11,7 +13,7 @@ interface Draft {
 }
 interface EditorOptions {
   save(input: ObjectInput): Promise<void>;
-  create(rendered: boolean): Promise<void>;
+  create(rendered: boolean, position?: Point): Promise<void>;
   remove(pageId: number, id: number): Promise<boolean>;
   changed(): void;
   closed(): void;
@@ -43,7 +45,10 @@ export class TextEditor {
   private objectId = 0;
   private changing = false;
   private timer: ReturnType<typeof setTimeout> | undefined;
-  private source: HTMLTextAreaElement;
+  private source: ContentEditor;
+  private editorStyle = 'writing';
+  private closed = false;
+  private inline?: { id: number; editor: ContentEditor };
   private preview: HTMLElement;
   private status: HTMLElement;
   private previewKey = '';
@@ -54,8 +59,9 @@ export class TextEditor {
       '<header class="text-header"><strong>Page content</strong><span id="text-status" role="status"></span><button id="save-text">Save now</button><button id="close-text" aria-label="Close text notes">×</button></header>' +
       '<div class="object-actions"><button id="add-page-text">Add page text</button><button id="add-linked-note">Add linked note</button></div>' +
       '<label class="object-choice">Object <select id="content-object" aria-label="Content object"></select></label>' +
-      '<div class="object-properties"><label>Label <input id="object-label" maxlength="200"></label><label>Format <input id="object-format" list="content-formats" maxlength="100"></label>' +
-      '<datalist id="content-formats"><option value="text/markdown"><option value="math/latex"><option value="chart/vega-lite"><option value="math/mathml"></datalist>' +
+      '<div class="text-modes"><label>Text <select id="text-mode" aria-label="Text format"><option value="text/markdown">Markdown</option><option value="text/plain">Plain text</option><option value="custom">Other format</option></select></label><label>Editor <select id="editor-style" aria-label="Editor style"></select></label></div>' +
+      '<details class="object-advanced"><summary>Properties</summary><div class="object-properties"><label>Label <input id="object-label" maxlength="200"></label><label>Format <input id="object-format" list="content-formats" maxlength="100"></label>' +
+      '<datalist id="content-formats"><option value="text/markdown"><option value="text/plain"><option value="math/latex"><option value="chart/vega-lite"><option value="math/mathml"></datalist>' +
       '<label><input type="checkbox" id="object-rendered"> Show on page</label>' +
       '<div class="object-placement">' +
       ['x', 'y', 'width', 'height', 'rotation']
@@ -72,10 +78,31 @@ export class TextEditor {
             '></label>',
         )
         .join('') +
-      '</div></div>' +
-      '<label class="text-source-label">Markdown / LaTeX source; other formats use JSON<textarea id="text-source" aria-label="Markdown note" maxlength="200000" spellcheck="true" placeholder="Add page text or a linked note to begin."></textarea></label>' +
+      '</div></div></details>' +
+      '<div class="text-source-label"><div id="source-editor"></div><small>Markdown supports $inline math$. Escape or ⌘/Ctrl+Enter finishes on-page editing.</small></div>' +
       '<div id="text-preview" class="markdown-preview" aria-label="Rendered note"></div><button id="delete-object">Delete object</button>';
-    this.source = root.querySelector('#text-source')!;
+    this.source = this.mountSource();
+    const styles = root.querySelector<HTMLSelectElement>('#editor-style')!;
+    for (const [id, style] of contentEditors) styles.add(new Option(style.label, id));
+    styles.value = this.editorStyle;
+    styles.onchange = () => {
+      this.editorStyle = styles.value;
+      this.source.close();
+      this.source = this.mountSource();
+      this.options.changed();
+    };
+    root.querySelector<HTMLSelectElement>('#text-mode')!.onchange = (event) => {
+      const mode = (event.target as HTMLSelectElement).value,
+        draft = this.current();
+      if (mode === 'custom') {
+        root.querySelector<HTMLDetailsElement>('.object-advanced')!.open = true;
+        return;
+      }
+      if (draft) {
+        draft.input.format = mode;
+        this.changed(draft);
+      }
+    };
     this.preview = root.querySelector('#text-preview')!;
     this.status = root.querySelector('#text-status')!;
     root.querySelector<HTMLButtonElement>('#close-text')!.onclick = options.closed;
@@ -98,13 +125,6 @@ export class TextEditor {
         if (await options.remove(pageId, id)) this.drafts.delete(id);
         options.changed();
       });
-    };
-    this.source.oninput = () => {
-      const draft = this.current();
-      if (draft) {
-        draft.source = this.source.value;
-        this.changed(draft);
-      }
     };
     for (const field of root.querySelectorAll<HTMLInputElement>(
       '.object-properties input:not([type="hidden"])',
@@ -130,11 +150,78 @@ export class TextEditor {
         this.changed(draft);
       };
   }
+  private mountSource() {
+    const editor = contentEditors.get(this.editorStyle)!.mount(this.root.querySelector('#source-editor')!, {
+      label: 'Text source',
+      input: (source) => {
+        const draft = this.current();
+        if (draft) {
+          draft.source = source;
+          this.changed(draft);
+        }
+      },
+    });
+    editor.element.id = 'text-source';
+    return editor;
+  }
+  get selectedId() {
+    return this.objectId;
+  }
+  /** Sidebar and on-page editors share object-keyed drafts and the save queue. */
+  openInline(id: number, root: HTMLElement, done: () => void): () => void {
+    this.select(id);
+    const draft = this.drafts.get(id);
+    const editor = contentEditors.get(this.editorStyle)!.mount(root, {
+      label: 'Page text',
+      done,
+      input: (source) => {
+        const current = this.drafts.get(id);
+        if (current) {
+          current.source = source;
+          this.changed(current);
+        }
+      },
+    });
+    const toolbar = document.createElement('div');
+    toolbar.className = 'inline-text-toolbar';
+    const format = document.createElement('select');
+    format.setAttribute('aria-label', 'Page text format');
+    for (const [label, value] of [
+      ['Markdown', 'text/markdown'],
+      ['Plain text', 'text/plain'],
+    ])
+      format.add(new Option(label, value));
+    if (draft && !['text/markdown', 'text/plain'].includes(draft.input.format))
+      format.add(new Option(draft.input.format, draft.input.format));
+    format.value = draft?.input.format ?? 'text/markdown';
+    format.onchange = () => {
+      const current = this.drafts.get(id);
+      if (current) {
+        current.input.format = format.value;
+        this.changed(current);
+      }
+    };
+    const finish = document.createElement('button');
+    finish.textContent = '✓';
+    finish.setAttribute('aria-label', 'Finish text');
+    finish.onclick = done;
+    toolbar.append(format, finish);
+    root.append(toolbar);
+    editor.value = draft?.source ?? '';
+    this.inline = { id, editor };
+    editor.focus();
+    return () => {
+      toolbar.remove();
+      editor.close();
+      if (this.inline?.editor === editor) this.inline = undefined;
+      if (!this.closed) void this.flushObject(id);
+    };
+  }
   private current() {
     return this.drafts.get(this.objectId);
   }
-  async create(rendered = true) {
-    await this.changeObject(() => this.options.create(rendered));
+  async create(rendered = true, position?: Point) {
+    await this.changeObject(() => this.options.create(rendered, position));
     this.source.focus();
   }
   private async changeObject(work: () => Promise<void>) {
@@ -155,10 +242,7 @@ export class TextEditor {
   private payload(draft: Draft): ObjectInput {
     return {
       ...draft.input,
-      data:
-        draft.input.format === 'text/markdown' || draft.input.format === 'math/latex'
-          ? { source: draft.source }
-          : JSON.parse(draft.source),
+      data: contentCodec(draft.input.format).encode(draft.source),
     };
   }
   private changed(draft: Draft) {
@@ -215,16 +299,22 @@ export class TextEditor {
       const data = JSON.parse(chosen.data_json);
       draft = {
         input: objectInput(chosen),
-        source:
-          chosen.format === 'text/markdown' || chosen.format === 'math/latex'
-            ? contentSource(data)
-            : JSON.stringify(data, null, 2),
+        source: contentCodec(chosen.format).decode(data),
         saved: '',
         saving: false,
         error: '',
       };
       draft.saved = this.key(draft);
       this.drafts.set(chosen.id, draft);
+    }
+    const mode = this.root.querySelector<HTMLSelectElement>('#text-mode')!;
+    mode.value = ['text/markdown', 'text/plain'].includes(draft?.input.format ?? '')
+      ? draft!.input.format
+      : 'custom';
+    if (this.inline) {
+      const current = this.drafts.get(this.inline.id);
+      this.inline.editor.value = current?.source ?? '';
+      this.inline.editor.disabled = disabled;
     }
     if (this.source.value !== (draft?.source ?? '')) this.source.value = draft?.source ?? '';
     if (draft && this.previewKey !== JSON.stringify([draft.input.format, draft.source]))
@@ -253,6 +343,7 @@ export class TextEditor {
     }
     this.root.querySelector<HTMLButtonElement>('#save-text')!.disabled ||=
       !draft || this.key(draft) === draft.saved;
+    this.source.disabled = disabled || this.changing || !draft;
     this.showStatus();
   }
   private showStatus() {
@@ -311,6 +402,9 @@ export class TextEditor {
     this.preview.replaceChildren();
   }
   close() {
+    this.closed = true;
+    this.source.close();
+    this.inline?.editor.close();
     clearTimeout(this.timer);
   }
 }

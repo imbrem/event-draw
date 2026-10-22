@@ -5,7 +5,8 @@ import type { Gesture, Point, Tool, ViewBox } from '../model.ts';
 export interface CanvasOptions {
   canStart(): boolean;
   touchEnabled(): boolean;
-  tool(): Tool;
+  tool(): Tool | 'text';
+  onText?(point: Point): void;
   gesture(tool: Gesture['tool']): Gesture;
   view(): ViewBox;
   scene(): Omit<Scene, 'active' | 'hover'>;
@@ -113,6 +114,11 @@ export class NotebookCanvas {
   }
   private start(event: PointerEvent) {
     if (event.button !== 0) return;
+    if (this.options.tool() === 'text' && this.options.canStart() && !this.active) {
+      event.preventDefault();
+      this.options.onText?.(this.position(event));
+      return;
+    }
     if (event.pointerType === 'pen') {
       this.lastPen = performance.now();
       if (this.active?.gesture.data.deliveries[0]?.reported.pointerType === 'touch') this.cancelInk();
@@ -146,6 +152,7 @@ export class NotebookCanvas {
     }
     if (!this.options.canStart() || this.active || this.pan) return;
     const tool = this.options.tool();
+    if (tool === 'text') return;
     if (tool === 'pan') {
       this.pan = {
         id: event.pointerId,

@@ -1,4 +1,6 @@
 interface Actions {
+  text(): void;
+  escape(): void;
   undo(): void;
   redo(): void;
   copy(): void;
@@ -43,15 +45,19 @@ export function keyboardShortcuts(actions: Actions, enabled: () => boolean) {
                     : key === 'a'
                       ? actions.selectAll
                       : undefined;
-    else
+    else if (!event.altKey)
       action =
-        key === 'delete' || key === 'backspace'
-          ? actions.remove
-          : key === 'pageup'
-            ? actions.previous
-            : key === 'pagedown'
-              ? actions.next
-              : undefined;
+        key === 't'
+          ? actions.text
+          : key === 'escape'
+            ? actions.escape
+            : key === 'delete' || key === 'backspace'
+              ? actions.remove
+              : key === 'pageup'
+                ? actions.previous
+                : key === 'pagedown'
+                  ? actions.next
+                  : undefined;
     if (action) {
       event.preventDefault();
       action();

@@ -1,4 +1,5 @@
 import { insertRow, scalar, type SqlDatabase } from './sql.ts';
+import { requireSchemaIdentity } from './schema.ts';
 import { initializeIdentity } from './identity.ts';
 
 export interface EventOptions {
@@ -40,7 +41,7 @@ export function recordEvent(db: SqlDatabase, kind: string, options: EventOptions
 
 export function initializeNotebook(db: SqlDatabase) {
   if (!initializeIdentity(db)) return;
-  const id = recordEvent(db, 'notebook.create');
+  const id = recordEvent(db, 'notebook.create', { data: { schema: requireSchemaIdentity(db) } });
   for (const { id: documentId, ...row } of db.all('SELECT * FROM documents'))
     insertRow(db, 'app_event_documents', { app_event_id: id, document_id: documentId, ...row });
   for (const { id: pageId, ...row } of db.all('SELECT * FROM pages'))

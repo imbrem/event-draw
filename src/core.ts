@@ -19,3 +19,7 @@ export * from './storage/identity.ts';
 export * from './storage/event-stream.ts';
 export * from './frontend.ts';
 export * from './streams.ts';
+export * from './content-codecs.ts';
+export * from './playback.ts';
+export * from './trace-codecs.ts';
+export * from './storage/schema.ts';

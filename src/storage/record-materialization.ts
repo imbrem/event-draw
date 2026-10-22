@@ -1,5 +1,5 @@
 import { insertRow, scalar, transaction, type Row, type SqlDatabase, type SqlValue } from './sql.ts';
-import { SCHEMA_VERSION } from './schema.ts';
+import { sameSchema, type SchemaIdentity } from './schema.ts';
 import { clearNotebookRows, validateNotebook } from './notebooks.ts';
 import { DocumentStore } from './documents.ts';
 import { recordEvent } from './events.ts';
@@ -41,7 +41,7 @@ export interface Envelope {
 }
 export type ReplayEnvelope = Envelope | { type: 'resources'; recordId: number; records: Envelope['records'] };
 export interface Header {
-  schema: number;
+  schema: SchemaIdentity;
   metadata: Row;
   imports: Row[];
   references: Row[];
@@ -100,7 +100,7 @@ export function replayEnvelopes(
   target: SqlDatabase,
   strict: boolean,
 ): ReplayReport {
-  if (header?.schema !== SCHEMA_VERSION || !header.metadata || !Array.isArray(header.imports))
+  if (!sameSchema(header?.schema) || !header.metadata || !Array.isArray(header.imports))
     throw new Error('Unsupported or missing notebook metadata');
   const report: ReplayReport = { accepted: 0, skipped: [], missingLinks: 0, recoveryPage: false };
   const columns = new Map<string, string[]>(),

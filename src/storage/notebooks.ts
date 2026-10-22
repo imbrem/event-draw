@@ -1,6 +1,7 @@
+import { tracePayloads } from '../trace-codecs.ts';
 import { MUTABLE_TABLES } from './identity.ts';
 import { insertRow, scalar, transaction, type SqlDatabase } from './sql.ts';
-import { SCHEMA_VERSION } from './schema.ts';
+import { requireSchemaIdentity, sameSchema } from './schema.ts';
 import { measuredSamples, type InkData } from '../model.ts';
 import type { InkOutput } from '../ink.ts';
 
@@ -11,10 +12,13 @@ function definitions(db: SqlDatabase) {
 }
 /** Never execute schema/code from an imported notebook. Accept only our schema. */
 export function validateNotebook(source: SqlDatabase, expected: SqlDatabase) {
-  if (scalar(source, 'PRAGMA user_version') !== SCHEMA_VERSION)
-    throw new Error('Unsupported notebook schema; expected ' + SCHEMA_VERSION);
+  const identity = requireSchemaIdentity(source);
+  requireSchemaIdentity(expected);
   if (JSON.stringify(definitions(source)) !== JSON.stringify(definitions(expected)))
     throw new Error('Notebook schema differs from this app version');
+  for (const row of source.all("SELECT data_json FROM app_events WHERE kind='notebook.create'"))
+    if (!sameSchema(JSON.parse(String(row.data_json)).schema, identity))
+      throw new Error('Notebook creation schema does not match metadata');
   const blobDefinition = source.all("SELECT type,name,sql FROM sqlite_schema WHERE name='blobs'");
   if (
     blobDefinition.length &&
@@ -73,8 +77,9 @@ export function validateNotebook(source: SqlDatabase, expected: SqlDatabase) {
   )
     throw new Error('Notebook page order is ambiguous');
   const counts = new Map<number, number>();
-  for (const row of source.all('SELECT id,data_json FROM stroke_events')) {
-    const data = JSON.parse(String(row.data_json)) as InkData;
+  for (const row of source.all('SELECT * FROM stroke_events')) {
+    if (row.data_version !== 1) throw new Error('Unsupported raw trace version');
+    const data = tracePayloads.unpack(row) as InkData;
     if (
       !Array.isArray(data.deliveries) ||
       data.deliveries.some(
@@ -152,7 +157,9 @@ export function replaceNotebook(source: SqlDatabase, target: SqlDatabase) {
 /** Internal schema names only. Call inside a replacement transaction. */
 export function clearNotebookRows(db: SqlDatabase) {
   db.exec('PRAGMA defer_foreign_keys=ON');
-  const tables = db.all("SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'");
+  const tables = db.all(
+    "SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name<>'schema_identity'",
+  );
   for (const { name } of tables.reverse()) db.exec('DELETE FROM ' + name);
   db.exec('DELETE FROM sqlite_sequence');
 }

@@ -11,7 +11,9 @@ in Safari on your iPad or a desktop browser. Sign in to GitHub with repository r
 No Xcode or macOS update is needed for browser use.
 
 - Draw with Pen or Highlighter; choose a common color or a custom one.
-- **Insert text** places Markdown with inline `$LaTeX$` on the page. **Text** manages page content and linked notes.
+- Choose **A** (or **T**), tap the page and type Markdown with `$LaTeX$`, or choose plain text.
+  Double-click text to edit; drag to move and use selection handles to resize/rotate. **Notes** manages linked notes/properties.
+- **⌘/Ctrl+Z** undoes; **⌘/Ctrl+Shift+Z** or **Ctrl+Y** redoes. Text editors keep native undo.
 - Edit the document title in the header. Numbered pages have separate stable identities.
 - **Menu** opens PDFs by file/URL, inserts pages/images/SVGs and exposes raw/event viewers and diagnostics.
 - **Menu → Export** saves a notebook, a reduced notebook, annotated PDF or typed JSONL events.
@@ -21,7 +23,7 @@ The app stores one working notebook per browser profile/origin. SQLite files emb
 blobs by default; export files to move between devices. Open/import replaces the working
 copy after retaining recovery data. There is no sync server.
 
-**Schema 7:** older local notebooks need **Menu → Local state → Reset local notebook**.
+**Schema UUID + SemVer (`0.0.0`):** older local notebooks need **Menu → Local state → Reset local notebook**.
 Export existing SQLite first if needed. There are no migrations or silent resets.
 
 ## Develop
@@ -50,6 +52,7 @@ pnpm events export notebook.sqlite3 events.jsonl
 pnpm events replay events.jsonl reconstructed.sqlite3
 pnpm events export notebook.sqlite3 experiment.jsonl --adapter ./trusted-exchange.ts
 pnpm detect notebook.sqlite3 ./trusted-detector.mjs
+pnpm bench:strokes notebook.sqlite3  # lossless JSON/CBOR + zstd comparison
 ```
 
 ## Architecture
@@ -67,15 +70,16 @@ flowchart LR
   Exchange <--> File[JSONL / research codecs]
 ```
 
-- **Observations:** raw pen/contact data and clocks; style, tool, placement and edit times stay separate.
+- **Observations:** raw pen/contact data and clocks, stored as pluggable CBOR + zstd payloads; style, tool, placement and edit times stay separate.
 - **Artifacts:** immutable, versioned trace outputs, content and detections with provenance.
 - **Edits:** complete effects determine the current scene; replay does not rerun processors.
 - **Identity:** 256-bit notebook namespace; mutable objects use namespace + logical timestamp and local integer aliases.
 - **Exchange:** replaceable source/sink, payload bindings, transforms, framing and replay policy. JSONL is one default.
 - **Extensions:** trusted frontend modules receive state subscriptions and queued commands; processing, lasso, detection,
-  content rendering and content backends have separate interfaces.
+  content storage/editing/rendering, playback, footer indicators and content backends have separate interfaces.
 
 Read the [architecture and extension examples](docs/README.md),
-[feature/schema reference](docs/reference.md), and [SQLite schema](src/schema.sql).
+[feature/schema reference](docs/reference.md), [trace formats/compression results](docs/trace-storage.md),
+and [SQLite schema](src/schema.sql).
 The [CI workflow](.github/workflows/pages.yml) tests production builds in Chromium/WebKit
 and deploys `main` to the private Pages site after checks pass.

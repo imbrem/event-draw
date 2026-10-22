@@ -1,3 +1,5 @@
+import type { InkData } from '../src/model.ts';
+import { tracePayloads } from '../src/trace-codecs.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { database, gesture, note } from './helpers.ts';
@@ -47,7 +49,7 @@ test('malformed processors retain raw contact and persist a rejected output inst
     assert.equal(state.rawCount, 1); assert.equal(state.shapes.length, 0);
     assert.equal(d.db.all('SELECT kind FROM app_events ORDER BY id DESC LIMIT 1')[0].kind, 'input.reject');
     assert.match(String(d.db.all('SELECT rejection_reason FROM ink_outputs')[0].rejection_reason), /invalid geometry/);
-    assert.equal(JSON.parse(String(d.db.all('SELECT data_json FROM stroke_events')[0].data_json)).deliveries[1].reported.clientX, 120);
+    assert.equal((tracePayloads.unpack(d.db.all('SELECT * FROM stroke_events')[0]) as InkData).deliveries[1].reported.clientX, 120);
     input.policy = { ...DEFAULT_INK_POLICY, rejection: { id: 'pen-only@1', options: {} } };
     d.journal.gesture(input, d.sessionId);
     assert.equal(d.journal.state().rawCount, 2); assert.equal(d.journal.visible().length, 0);

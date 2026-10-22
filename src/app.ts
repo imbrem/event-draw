@@ -1,3 +1,4 @@
+import { StatusIndicators, defaultIndicators, type StatusIndicator } from './ui/status-indicators.ts';
 import { DocumentControls } from './ui/document-controls.ts';
 import { FrontendExtensions, type FrontendExtension } from './ui/extensions.ts';
 import { EDIT_COMMANDS, type FrontendHost } from './frontend.ts';
@@ -29,13 +30,21 @@ import { PageBrowser } from './ui/page-browser.ts';
 import { PdfText } from './ui/pdf-text.ts';
 import type { ClipboardInk } from './model.ts';
 
-export function startApp(config: { extensions?: readonly FrontendExtension[] } = {}): () => void {
+export function startApp(
+  config: { extensions?: readonly FrontendExtension[]; indicators?: readonly StatusIndicator[] } = {},
+): () => void {
   mountShell();
   const db = new DatabaseClient(),
     pdfs = new PdfLibrary(db),
     session = captureSession();
   const sources = new PageSources(db, pdfs);
   registerAssetRenderer((hash, type) => sources.imageElement(hash, type));
+  const indicators = new StatusIndicators(
+    element('status-indicators'),
+    config.indicators ?? defaultIndicators,
+    () => db.diagnostics(),
+  );
+  let selectedObject = 0;
   let clipboard: ClipboardInk[] = [];
   const location = new NotebookLocation();
   let state: State = EMPTY_STATE,
@@ -77,6 +86,8 @@ export function startApp(config: { extensions?: readonly FrontendExtension[] } =
   };
   const tools = new ToolPicker(element('tool-picker'), () => {
     selected.clear();
+    selectedObject = 0;
+    pageObjects.finishEditing();
     refresh();
   });
   const paints = new PaintControls(element('color'), element('width'), element('color-palette'));
@@ -92,7 +103,7 @@ export function startApp(config: { extensions?: readonly FrontendExtension[] } =
       await edit(() => db.setObject(input));
       if (failed) throw new Error('Database write failed; export unsaved drafts before resetting.');
     },
-    async create(rendered) {
+    async create(rendered, position) {
       const targetPage = pageId,
         previous = new Set(state.objects.map((o) => o.id)),
         box = view();
@@ -103,14 +114,17 @@ export function startApp(config: { extensions?: readonly FrontendExtension[] } =
             format: 'text/markdown',
             data: { source: '' },
             rendered,
-            x: box.x + box.width * 0.1,
-            y: box.y + box.height * 0.1,
+            x: position?.x ?? box.x + box.width * 0.1,
+            y: position?.y ?? box.y + box.height * 0.1,
             width: box.width * 0.6,
             height: Math.min(240, box.height * 0.3),
             rotation: 0,
             label: rendered ? 'Text' : 'Note',
           }),
-        () => textEditor.select(state.objects.find((o) => !previous.has(o.id))!.id),
+        () => {
+          selectedObject = state.objects.find((o) => !previous.has(o.id))!.id;
+          textEditor.select(selectedObject);
+        },
       );
     },
     async remove(targetPage, id) {
@@ -140,7 +154,11 @@ export function startApp(config: { extensions?: readonly FrontendExtension[] } =
   const pageObjects = new PageObjects(
     element('page-objects'),
     element('paper'),
-    (id) => textEditor.select(id),
+    (id) => {
+      selected.clear();
+      selectedObject = id;
+      textEditor.select(id);
+    },
     (ids) => {
       element('tool-picker').querySelector<HTMLButtonElement>('[data-tool="lasso"]')!.click();
       selected = new Set(ids);
@@ -156,6 +174,7 @@ export function startApp(config: { extensions?: readonly FrontendExtension[] } =
         if (object) void edit(() => db.setObject({ ...objectInput(object), ...placement }), undefined, false);
       });
     },
+    (id, root, done) => textEditor.openInline(id, root, done),
   );
   const pdfText = new PdfText(element('pdf-text'), pdfs);
   const browser = new PageBrowser(element('page-browser'), sources, pdfs, (id) => {
@@ -188,13 +207,18 @@ export function startApp(config: { extensions?: readonly FrontendExtension[] } =
       (tools.value === 'pen' || tools.value === 'highlighter' || writes === 0),
     touchEnabled: () => element<HTMLInputElement>('touch').checked,
     tool: () => tools.value,
+    onText: (position) => {
+      void textEditor.create(true, position).then(() => {
+        if (selectedObject) pageObjects.edit(selectedObject);
+      });
+    },
     gesture,
     view,
     scene: () => ({
       shapes: shapes(),
       pending: pending.filter((g) => g.pageId === pageId),
       view: view(),
-      tool: tools.value,
+      tool: tools.value === 'text' ? 'pen' : tools.value,
       selected: [...selected],
       radius: Number(element<HTMLInputElement>('radius').value),
     }),
@@ -210,6 +234,7 @@ export function startApp(config: { extensions?: readonly FrontendExtension[] } =
         : [];
     },
     onActive(value) {
+      if (value) selectedObject = 0;
       active = value;
       refresh();
     },
@@ -283,11 +308,13 @@ export function startApp(config: { extensions?: readonly FrontendExtension[] } =
     refresh();
   }
   function refresh() {
+    if (!state.objects.some((object) => object.id === selectedObject && object.page_id === pageId && object.rendered))
+      selectedObject = 0;
     selected = new Set([...selected].filter((id) => shapes().some((s) => s.id === id)));
     const busy = !ready || failed || active || writes > 0 || resetting || importing;
     const board = page()?.kind === 'whiteboard';
     tools.update({ disabled: busy, whiteboard: board });
-    paints.select(tools.value);
+    paints.select(tools.value === 'text' ? 'pen' : tools.value);
     inkControls.update(busy);
     textEditor.update(
       pageId,
@@ -392,13 +419,20 @@ export function startApp(config: { extensions?: readonly FrontendExtension[] } =
     surface.update(page(), currentDocument());
     notebook.repaint();
     extensions?.update({ state, documentId, pageId, sessionId, ready, busy });
+    indicators.update({ state, documentId, pageId, sessionId, ready, busy });
     pdfText.update(page(), element<HTMLInputElement>('select-pdf-text').checked);
     pageObjects.update(
       state.objects.filter((o) => o.page_id === pageId),
       element<HTMLInputElement>('show-boxes').checked ? state.boxes.filter((b) => b.page_id === pageId) : [],
       box,
-      !element('text-panel').hidden && !busy,
+      (!element('text-panel').hidden || tools.value === 'text' || tools.value === 'lasso') &&
+        ready &&
+        !failed &&
+        !active &&
+        !resetting &&
+        !importing,
       tools.value === 'lasso' && !busy,
+      selectedObject || (!element('text-panel').hidden ? textEditor.selectedId : 0),
     );
   }
   function edit(work: () => Promise<State>, after?: () => void, fatal = true) {
@@ -513,11 +547,9 @@ export function startApp(config: { extensions?: readonly FrontendExtension[] } =
   }
   element('toggle-text').onclick = () => showText(Boolean(element('text-panel').hidden));
   const insertText = async () => {
-    showText(true);
+    tools.select('text');
     await textEditor.create(true);
-  };
-  element('insert-page-text').onclick = () => {
-    void insertText();
+    pageObjects.edit(selectedObject);
   };
   element('show-boxes').onchange = () => refresh();
   element('select-pdf-text').onchange = () => refresh();
@@ -820,12 +852,24 @@ export function startApp(config: { extensions?: readonly FrontendExtension[] } =
   };
   const closeShortcuts = keyboardShortcuts(
     {
+      text: () => tools.select('text'),
+      escape: () => {
+        pageObjects.finishEditing();
+        selectedObject = 0;
+        tools.select('pen');
+      },
       undo: () => element('undo').click(),
       redo: () => element('redo').click(),
       copy: () => element('copy-selection').click(),
       paste: pasteSelection,
       duplicate: () => element('duplicate-selection').click(),
-      remove: () => element('delete-selection').click(),
+      remove: () => {
+        if (selectedObject) {
+          const id = selectedObject;
+          selectedObject = 0;
+          void edit(() => db.deleteObject(pageId, id));
+        } else element('delete-selection').click();
+      },
       previous: () => element('previous-page').click(),
       next: () => element('next-page').click(),
       save: () => {
@@ -905,6 +949,7 @@ export function startApp(config: { extensions?: readonly FrontendExtension[] } =
     });
   refresh();
   return () => {
+    indicators.close();
     extensions?.close();
     files.close();
     document.removeEventListener('visibilitychange', backgroundSave);

@@ -1,6 +1,6 @@
 import type { SqlDatabase, SqlValue } from './sql.ts';
 import { MUTABLE_TABLES } from './identity.ts';
-import { SCHEMA_VERSION } from './schema.ts';
+import { requireSchemaIdentity } from './schema.ts';
 import {
   RESOURCES,
   EFFECTS,
@@ -123,7 +123,7 @@ export function* collectNotebookRecords(
 ): Generator<StreamRecord> {
   const { byTable } = bindings(format);
   const header: Header = {
-    schema: SCHEMA_VERSION,
+    schema: requireSchemaIdentity(db),
     metadata: db.all('SELECT * FROM notebook_metadata')[0],
     imports: db.all('SELECT * FROM notebook_imports ORDER BY id'),
     references: db.all('SELECT * FROM object_ids WHERE local_id IS NULL ORDER BY id'),

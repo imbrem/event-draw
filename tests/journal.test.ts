@@ -1,3 +1,5 @@
+import type { InkData } from '../src/model.ts';
+import { tracePayloads } from '../src/trace-codecs.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { database, gesture } from './helpers.ts';
@@ -8,8 +10,8 @@ test('raw capture is local and style/tool/page placement live in app records', (
   try {
     d.journal.gesture(gesture([[100, 200], [200, 220]]), d.sessionId);
     const columns = d.db.all('PRAGMA table_info(stroke_events)').map((row) => row.name);
-    assert.deepEqual(columns, ['id', 'capture_session_id', 'data_version', 'data_json']);
-    const raw = JSON.parse(String(d.db.all('SELECT data_json FROM stroke_events')[0].data_json));
+    assert.deepEqual(columns, ['id', 'capture_session_id', 'data_version', 'data_codec', 'decoded_bytes', 'data']);
+    const raw = tracePayloads.unpack(d.db.all('SELECT * FROM stroke_events')[0]) as InkData;
     assert.equal(raw.deliveries[0].reported.x, 0);
     assert.equal(raw.deliveries[0].reported.y, 0);
     assert.equal(raw.deliveries[1].reported.x, 100);

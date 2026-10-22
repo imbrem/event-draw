@@ -1,3 +1,4 @@
+import { SCHEMA_IDENTITY } from '../src/storage/schema.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { database, gesture, note } from './helpers.ts';
@@ -10,6 +11,7 @@ import {
   notebookRecordFormat,
 } from '../src/storage/event-stream.ts';
 import { jsonlCodec } from '../src/streams.ts';
+import type { Envelope, Header } from '../src/storage/record-materialization.ts';
 
 test('notebook and mutable identities survive reopen, rollback, foreign references and compaction', () => {
   const source = database(),
@@ -356,4 +358,24 @@ test('missing optional causal links are counted once even when resources are sha
     source.close();
     target.close();
   }
+});
+
+test('notebook creation and JSONL header carry the same schema family/version; mismatches do not replace state', () => {
+  const source = database(), target = database();
+  try {
+    const records = [...collectNotebookRecords(source.db)];
+    assert.deepEqual((records[0].data as Header).schema, SCHEMA_IDENTITY);
+    const creation = records.find((r) => r.type === 'app.edit' && (r.data as Envelope).event.kind === 'notebook.create')!;
+    assert.deepEqual(JSON.parse(String((creation.data as Envelope).event.data_json)).schema, SCHEMA_IDENTITY);
+    const previous = target.journal.state();
+    const mismatch = structuredClone(records);
+    (mismatch[0].data as Header).schema.uuid = '0'.repeat(64);
+    assert.throws(() => reconstructNotebookRecords(mismatch, target.db), /Unsupported/);
+    assert.deepEqual(target.journal.state(), previous);
+    const mismatchEvent = structuredClone(records);
+    const event = (mismatchEvent.find((r) => r.id === creation.id)!.data as Envelope).event;
+    event.data_json = JSON.stringify({ schema: { ...SCHEMA_IDENTITY, version: '1.0.0' } });
+    assert.throws(() => reconstructNotebookRecords(mismatchEvent, target.db), /creation schema/);
+    assert.deepEqual(target.journal.state(), previous);
+  } finally { source.close(); target.close(); }
 });

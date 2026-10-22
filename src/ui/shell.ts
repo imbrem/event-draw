@@ -75,10 +75,9 @@ export function mountShell() {
       </div></div><aside id="text-panel" aria-label="Page text notes" hidden></aside></div>
       <div class="ink-dock" aria-label="Drawing tools">
         <div id="tool-picker" class="tool-picker" role="group" aria-label="Tools"></div>
-        <button id="undo" disabled>Undo</button>
-        <button id="redo" disabled>Redo</button><button id="browse-pages">Pages / Search</button>
-        <button id="toggle-text" aria-expanded="false" aria-controls="text-panel">Text</button>
-        <button id="insert-page-text" title="Insert text on this page">Insert text</button>
+        <button id="undo" disabled title="Undo (⌘/Ctrl+Z)" aria-keyshortcuts="Meta+Z Control+Z">↶ Undo</button>
+        <button id="redo" disabled title="Redo (⌘/Ctrl+Shift+Z or Ctrl+Y)" aria-keyshortcuts="Meta+Shift+Z Control+Shift+Z Control+Y">↷ Redo</button><button id="browse-pages">Pages / Search</button>
+        <button id="toggle-text" aria-expanded="false" aria-controls="text-panel">Notes</button>
         <div id="paint-toolbar" class="paint-toolbar"><div id="color-palette" class="color-palette"></div>
           <label id="color-control" title="Custom ink color"><input id="color" type="color" value="#203b42" aria-label="Ink color"></label></div>
         <details id="ink-settings"><summary>Ink & actions</summary><div class="ink-settings-panel">
@@ -104,5 +103,5 @@ export function mountShell() {
     </section>
     <section id="viewer-panel" hidden></section>
     <dialog id="page-browser" aria-label="Pages and search"></dialog>
-  </main>`;
+  </main><footer id="status-indicators" class="status-indicators" aria-label="Notebook indicators"></footer>`;
 }

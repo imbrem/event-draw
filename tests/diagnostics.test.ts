@@ -6,6 +6,7 @@ test('diagnostics distinguish visible ink captures, raw tool inputs and derived 
   const source = database(), compact = database();
   try {
     const empty = source.journal.diagnostics();
+    assert.ok(empty.databaseBytes > 0);
     assert.equal(empty.rawCaptures, 0); assert.equal(empty.assetBytes, 0);
     assert.equal(empty.activePages, 1); assert.equal(empty.documents, 1);
     source.journal.gesture(gesture([[0, 50], [100, 50]]), source.sessionId);
@@ -21,8 +22,8 @@ test('diagnostics distinguish visible ink captures, raw tool inputs and derived 
     assert.equal(stats.shapes, 4);
     assert.equal(stats.visibleShapes, 2);
     assert.equal(stats.appEvents, 7);
-    assert.equal(stats.rawBytes, source.db.all('SELECT data_json FROM stroke_events')
-      .reduce((n, row) => n + new TextEncoder().encode(String(row.data_json)).length, 0)); source.journal.snapshotInto(compact.db);
+    assert.equal(stats.rawBytes, source.db.all('SELECT data FROM stroke_events')
+      .reduce((n, row) => n + (row.data as Uint8Array).length, 0)); source.journal.snapshotInto(compact.db);
     const current = compact.journal.diagnostics();
     assert.equal(current.visibleShapes, stats.visibleShapes);
     assert.equal(current.visibleRawCaptures, stats.visibleRawCaptures);
