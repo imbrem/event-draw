@@ -274,6 +274,8 @@ test('tool buttons support keyboard selection, contextual controls, and drawing/
   await page.keyboard.press('Enter');
   await expect(pan).toHaveAttribute('aria-pressed', 'true');
   await page.locator('#page-number').fill('1');
+  await page.evaluate(() => window.dispatchEvent(new Event('resize')));
+  await expect(page.locator('#page-number')).toHaveValue('1');
   await page.locator('#page-number').press('Enter');
   await expect(pan).toBeDisabled();
   await expect(pen).toHaveAttribute('aria-pressed', 'true');

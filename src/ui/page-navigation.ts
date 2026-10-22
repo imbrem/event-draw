@@ -19,6 +19,13 @@ export class PageNavigation {
       if (!this.disabled && page) this.onSelect(page.id);
       else this.number.value = String(this.index + 1);
     };
+    this.number.onkeydown = (event) => {
+      if (event.key === 'Enter' && !event.isComposing) {
+        event.preventDefault();
+        // Blur commits number inputs consistently across browser/platform pairs.
+        this.number.blur();
+      }
+    };
   }
   private get previous() { return this.root.querySelector<HTMLButtonElement>('#previous-page')!; }
   private get next() { return this.root.querySelector<HTMLButtonElement>('#next-page')!; }
@@ -29,12 +36,15 @@ export class PageNavigation {
     if (!this.disabled && page) this.onSelect(page.id);
   }
   update(pages: Page[], id: number, disabled: boolean) {
+    const changedPage = this.id !== id;
     this.pages = pages; this.id = id; this.disabled = disabled;
     this.previous.disabled = disabled || this.index <= 0;
     this.next.disabled = disabled || this.index >= pages.length - 1;
     this.number.disabled = disabled || !pages.length;
     this.number.max = String(pages.length);
-    this.number.value = this.index < 0 ? '' : String(this.index + 1);
+    // Background/view updates must not replace a page number being typed.
+    if (changedPage || document.activeElement !== this.number)
+      this.number.value = this.index < 0 ? '' : String(this.index + 1);
     this.root.querySelector('#page-total')!.textContent = '/ ' + pages.length;
   }
 }
