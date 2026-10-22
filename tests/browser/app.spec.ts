@@ -1,6 +1,6 @@
 import { test as base, expect, webkit, type Page } from '@playwright/test';
 import { DatabaseSync } from 'node:sqlite';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -41,105 +41,246 @@ const test = base.extend({
   },
 });
 
-async function stroke(page: Page, offset = 0) {
-  const box = (await page.locator('canvas').boundingBox())!;
-  await page.mouse.move(box.x + 80, box.y + 100 + offset);
+async function stroke(page: Page, points = [[100, 150], [500, 150]]) {
+  await expect(page.locator('#save-state')).toHaveText('Saved');
+  const canvas = page.locator('#canvas');
+  // A tall page can intersect the viewport while its drawing start is above it
+  // (notably after reloading with the footer scrolled into view).
+  await canvas.evaluate((c) => c.scrollIntoView({ block: 'start' }));
+  const box = (await canvas.boundingBox())!;
+  const view = await canvas.evaluate((c) => c.style.aspectRatio.split('/').map(Number));
+  const positions = points.map(([x, y]) => ({ x: box.x + x / view[0] * box.width,
+    y: box.y + y / view[1] * box.height }));
+  await page.mouse.move(positions[0].x, positions[0].y);
   await page.mouse.down();
-  await page.mouse.move(box.x + 160, box.y + 135 + offset, { steps: 6 });
-  await page.mouse.move(box.x + 240, box.y + 105 + offset, { steps: 6 });
+  for (const p of positions.slice(1)) await page.mouse.move(p.x, p.y, { steps: 8 });
   await page.mouse.up();
   await expect(page.locator('#save-state')).toHaveText('Saved');
 }
 
 async function download(page: Page, id: string) {
-  await page.locator('.export-menu summary').click();
+  if (id !== '#export-existing') await page.locator('.export-menu summary').click();
   const next = page.waitForEvent('download');
   await page.locator(id).click();
   return await (await next).path();
 }
+async function exported(page: Page, id = '#export-full') {
+  return new DatabaseSync(await download(page, id));
+}
 
-test('draw, reload, undo, export full history and compact state with identical rendering', async ({ page }) => {
+test('draw, reload, inspect raw and app rows, undo, and compact with identical rendering', async ({ page }) => {
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
   await page.goto('/');
   await expect(page.locator('#storage')).toHaveText('Stored on this device');
   await stroke(page);
-  await stroke(page, 50);
-  await expect(page.locator('#counts')).toHaveText('2 visible · 2 captured · 2 app events');
-  const drawing = await page.locator('canvas').screenshot();
+  await stroke(page, [[100, 220], [450, 260]]);
+  await expect(page.locator('#counts')).toHaveText('2 visible · 2 raw strokes · 2 events');
+  const drawing = await page.locator('#canvas').screenshot();
   await page.reload();
-  await expect(page.locator('#storage')).toHaveText('Stored on this device');
-  await expect(page.locator('#counts')).toHaveText('2 visible · 2 captured · 2 app events');
-  expect(await page.locator('canvas').screenshot()).toEqual(drawing);
-  await page.getByRole('button', { name: 'Clear page', exact: true }).click();
+  await expect(page.locator('#counts')).toHaveText('2 visible · 2 raw strokes · 2 events');
+  expect(await page.locator('#canvas').screenshot()).toEqual(drawing);
+  await page.getByRole('button', { name: 'Events', exact: true }).click();
+  await expect(page.getByRole('table', { name: 'app_events', exact: true })).toBeVisible();
+  await expect(page.locator('#record-json')).toContainText('stroke.add');
+  await expect(page.locator('#event-effects')).toContainText('offset_x');
+  await page.getByRole('button', { name: 'Raw strokes', exact: true }).click();
+  await expect(page.getByRole('table', { name: 'stroke_events', exact: true })).toBeVisible();
+  await expect(page.locator('#record-json')).toContainText('deliveries');
+  await expect(page.getByLabel('Neutral raw stroke preview')).toBeVisible();
+  await expect.poll(() => page.getByLabel('Neutral raw stroke preview').evaluate((canvas) => {
+    const c = canvas as HTMLCanvasElement;
+    return c.getContext('2d')!.getImageData(0, 0, c.width, c.height).data.some((n, i) => i % 4 === 3 && n > 0);
+  })).toBe(true);
+  await page.screenshot({ path: 'test-results/raw-viewer.png', fullPage: true });
+  await page.getByRole('button', { name: 'Notebook', exact: true }).click();
+  await page.locator('#clear').click();
   await expect(page.locator('#counts')).toContainText('0 visible');
-  await page.getByRole('button', { name: 'Undo', exact: true }).click();
+  await page.locator('#undo').click();
   await expect(page.locator('#counts')).toContainText('2 visible');
-  expect(await page.locator('canvas').screenshot()).toEqual(drawing);
-  await page.getByRole('button', { name: 'Undo', exact: true }).click();
-  await expect(page.locator('#counts')).toHaveText('1 visible · 2 captured · 5 app events');
-
-  const fullPath = await download(page, '#export-full');
-  const snapshotPath = await download(page, '#export-visible');
-  const full = new DatabaseSync(fullPath);
-  const snapshot = new DatabaseSync(snapshotPath);
+  expect(await page.locator('#canvas').screenshot()).toEqual(drawing);
+  await page.locator('#undo').click();
+  await expect(page.locator('#counts')).toHaveText('1 visible · 2 raw strokes · 5 events');
+  const full = await exported(page), snapshot = await exported(page, '#export-visible');
   try {
-    const visible = 'SELECT id, kind, data_version, color, width, paint_order, data_json FROM visible_strokes ORDER BY paint_order, id';
+    const visible = 'SELECT * FROM visible_shapes ORDER BY paint_order, id';
     expect(snapshot.prepare(visible).all()).toEqual(full.prepare(visible).all());
     expect(full.prepare('SELECT count(*) AS n FROM app_events').get()!.n).toBe(5);
     expect(snapshot.prepare('SELECT count(*) AS n FROM app_events').get()!.n).toBe(1);
     expect(snapshot.prepare('SELECT count(*) AS n FROM stroke_events').get()!.n).toBe(1);
     expect(snapshot.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
     expect(snapshot.prepare('PRAGMA integrity_check').get()!.integrity_check).toBe('ok');
-    const row = full.prepare('SELECT created_at, data_json FROM stroke_events LIMIT 1').get()!;
-    const data = JSON.parse(row.data_json as string);
-    expect(data.created_at).toBeUndefined();
-    expect(data.deliveries.length).toBeGreaterThan(2);
+    expect(full.prepare('PRAGMA table_info(stroke_events)').all().map((r) => r.name))
+      .toEqual(['id', 'capture_session_id', 'data_version', 'data_json']);
+    const data = JSON.parse(full.prepare('SELECT data_json FROM stroke_events LIMIT 1').get()!.data_json as string);
+    expect(Object.keys(data)).toEqual(['deliveries']);
+    expect(data.deliveries[0].reported.x).toBe(0);
     expect(data.deliveries[0].reported.clientX).toBeGreaterThan(0);
-    expect(readFileSync(fullPath).subarray(0, 15).toString()).toBe('SQLite format 3');
+    expect(data.deliveries.length).toBeGreaterThan(2);
   } finally { full.close(); snapshot.close(); }
   expect(errors).toEqual([]);
   await page.screenshot({ path: 'test-results/notebook.png', fullPage: true });
 });
 
-test('narrow touch layout captures pen data and cancelled strokes without displaying them', async ({ page }) => {
+test('both erasers split or delete geometry and undo restores original raw references', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.locator('#save-state')).toHaveText('Saved');
+  await stroke(page);
+  await page.locator('#tool').selectOption('erase-parts');
+  await stroke(page, [[300, 120], [300, 180]]);
+  await expect(page.locator('#counts')).toHaveText('2 visible · 2 raw strokes · 2 events');
+  const split = await exported(page);
+  try {
+    const rows = split.prepare('SELECT * FROM visible_shapes ORDER BY start_index').all();
+    expect(rows).toHaveLength(2);
+    expect(rows[0].raw_stroke_id).toBe(rows[1].raw_stroke_id);
+    expect(Number(rows[0].end_index)).toBeLessThan(Number(rows[1].start_index));
+    expect(split.prepare('SELECT tool FROM app_events ORDER BY id DESC LIMIT 1').get()!.tool).toBe('erase-parts');
+  } finally { split.close(); }
+  await page.locator('#undo').click();
+  await expect(page.locator('#counts')).toContainText('1 visible');
+  await page.locator('#tool').selectOption('erase-strokes');
+  await stroke(page, [[300, 120], [300, 180]]);
+  await expect(page.locator('#counts')).toHaveText('0 visible · 3 raw strokes · 4 events');
+  await page.locator('#undo').click();
+  await expect(page.locator('#counts')).toContainText('1 visible');
+});
+
+test('pages share one journal and whiteboards pan/zoom independently of raw geometry', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.locator('#save-state')).toHaveText('Saved');
+  await stroke(page);
+  await page.locator('#page-size').selectOption('landscape');
+  await page.locator('#add-page').click();
+  await expect(page.locator('#page')).toHaveValue('2');
+  await expect(page.locator('#canvas')).toHaveCSS('aspect-ratio', '842 / 595');
+  await expect(page.locator('#counts')).toContainText('0 visible');
+  await stroke(page, [[100, 100], [400, 100]]);
+  await page.locator('#clear').click();
+  await expect(page.locator('#counts')).toContainText('0 visible');
+  await page.locator('#page').selectOption('1');
+  await expect(page.locator('#counts')).toContainText('1 visible');
+  await page.locator('#page-size').selectOption('whiteboard');
+  await page.locator('#add-page').click();
+  await expect(page.locator('#page')).toHaveValue('3');
+  await page.locator('#tool').selectOption('pan');
+  await stroke(page, [[100, 100], [300, 200]]);
+  await expect(page.locator('#view-position')).toContainText('x -200, y -100');
+  await page.locator('#zoom-in').click();
+  await expect(page.locator('#view-position')).toContainText('125%');
+  await page.locator('#tool').selectOption('pen');
+  await stroke(page);
+  const full = await exported(page), snapshot = await exported(page, '#export-visible');
+  try {
+    expect(full.prepare('SELECT count(*) AS n FROM stroke_events').get()!.n).toBe(3);
+    expect(full.prepare('SELECT DISTINCT page_id FROM app_events ORDER BY page_id').all().map((r) => r.page_id)).toEqual([1, 2, 3]);
+    expect(snapshot.prepare('SELECT * FROM pages').all()).toEqual(full.prepare('SELECT * FROM pages').all());
+    expect(snapshot.prepare('SELECT * FROM visible_shapes ORDER BY id').all())
+      .toEqual(full.prepare('SELECT * FROM visible_shapes ORDER BY id').all());
+  } finally { full.close(); snapshot.close(); }
+});
+
+test('narrow touch layout preserves cancelled pen observations without displaying them', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/');
   await expect(page.locator('#save-state')).toHaveText('Saved');
-  await page.locator('canvas').evaluate((canvas) => {
-    // Synthetic events have no active browser pointer, so omit pointer capture.
+  await page.locator('#canvas').evaluate((canvas) => {
     canvas.setPointerCapture = () => {};
     const rect = canvas.getBoundingClientRect();
-    const options = {
-      pointerId: 8, pointerType: 'pen', isPrimary: true, bubbles: true,
+    const options = { pointerId: 8, pointerType: 'pen', isPrimary: true, bubbles: true,
       clientX: rect.left + 50, clientY: rect.top + 60, button: 0, buttons: 1,
-      pressure: 0.83, tiltX: 23, tiltY: -12,
-    };
+      pressure: 0.83, tiltX: 23, tiltY: -12 };
     canvas.dispatchEvent(new PointerEvent('pointerdown', options));
     canvas.dispatchEvent(new PointerEvent('pointermove', { ...options, clientX: rect.left + 100 }));
     canvas.dispatchEvent(new PointerEvent('pointercancel', options));
   });
-  await expect(page.locator('#counts')).toHaveText('0 visible · 1 captured · 1 app events');
+  await expect(page.locator('#counts')).toHaveText('0 visible · 1 raw strokes · 1 events');
   await page.locator('#diagnostics summary').click();
   const details = JSON.parse((await page.locator('#sample-info').textContent())!);
   expect(details.lastReported.pressure).toBeCloseTo(0.83, 6);
-  await expect(page.locator('#sample-info')).toContainText('"status": "cancelled"');
+  expect(details.status).toBe('cancelled');
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
 
-test('unavailable persistent storage has a visible session-only fallback', async ({ page }) => {
-  // A second tab cannot acquire the same SAH pool while this tab owns it.
+test('a second tab is blocked rather than silently drawing into an unrelated database', async ({ page }) => {
   await page.goto('/');
   await expect(page.locator('#storage')).toHaveText('Stored on this device');
   const other = await page.context().newPage();
+  await other.goto('/');
+  await expect(other.locator('#storage')).toHaveText('Open in another tab');
+  await expect(other.locator('#notice')).toContainText('Close that tab');
+  await expect(other.locator('#tool')).toBeDisabled();
+  await expect(other.locator('#reset-settings')).toBeDisabled();
+  await page.close();
+  await other.reload();
+  await expect(other.locator('#storage')).toHaveText('Stored on this device');
+  await other.close();
+});
+
+test('reset is explicit, cancellation preserves data, and reset persists across reloads', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.locator('#save-state')).toHaveText('Saved');
+  await stroke(page);
+  await page.locator('.local-state summary').click();
+  page.once('dialog', (dialog) => dialog.dismiss());
+  await page.locator('#reset-settings').click();
+  await expect(page.locator('#counts')).toContainText('1 visible');
+  page.once('dialog', (dialog) => dialog.accept());
+  await page.locator('#reset-settings').click();
+  await expect(page.locator('#counts')).toHaveText('0 visible · 0 raw strokes · 0 events');
+  await page.reload();
+  await expect(page.locator('#counts')).toHaveText('0 visible · 0 raw strokes · 0 events');
+  await stroke(page);
+  await expect(page.locator('#counts')).toContainText('1 visible');
+});
+
+test('an unsupported on-disk schema can be exported and reset from the error screen', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.locator('#save-state')).toHaveText('Saved');
+  await stroke(page);
+  await page.route('**/__test_closed__', (route) => route.fulfill({ contentType: 'text/html', body: '<title>Closed notebook</title>' }));
+  await page.goto('/__test_closed__');
+  await expect.poll(() => page.evaluate(async () => (await navigator.locks.query()).held?.length ?? 0)).toBe(0);
+  // Change only SQLite's user_version header in this isolated test origin.
+  // SAH pool files prepend VFS metadata, so locate the database header first.
+  const changed = await page.evaluate(async () => {
+    async function change(directory: FileSystemDirectoryHandle): Promise<boolean> {
+      const entries = directory as unknown as AsyncIterable<[string, FileSystemHandle]>;
+      for await (const [, entry] of entries) {
+        if (entry.kind === 'directory') {
+          if (await change(entry as FileSystemDirectoryHandle)) return true;
+        } else {
+          const file = entry as FileSystemFileHandle;
+          const bytes = new Uint8Array(await (await file.getFile()).arrayBuffer());
+          const magic = new TextEncoder().encode('SQLite format 3');
+          for (let offset = 0; offset + 100 < bytes.length; offset++) {
+            if (!magic.every((byte, index) => bytes[offset + index] === byte)) continue;
+            new DataView(bytes.buffer).setUint32(offset + 60, 999);
+            const writer = await file.createWritable();
+            await writer.write(bytes); await writer.close();
+            return true;
+          }
+        }
+      }
+      return false;
+    }
+    const root = await navigator.storage.getDirectory();
+    return change(await root.getDirectoryHandle('event-draw-v1'));
+  });
+  expect(changed).toBe(true);
+  await page.goto('/');
+  await expect(page.locator('#notice')).toContainText('Unsupported database schema version: 999');
+  await expect(page.locator('#reset-local')).toBeVisible();
+  const old = await exported(page, '#export-existing');
   try {
-    await other.goto('/');
-    await expect(other.locator('#storage')).toHaveText('Session only · export to keep');
-    await expect(other.locator('#notice')).toBeVisible();
-    await stroke(other);
-    const path = await download(other, '#export-full');
-    const exported = new DatabaseSync(path);
-    expect(exported.prepare('SELECT count(*) AS n FROM visible_strokes').get()!.n).toBe(1);
-    exported.close();
-  } finally { await other.close(); }
+    expect(old.prepare('PRAGMA user_version').get()!.user_version).toBe(999);
+    expect(old.prepare('SELECT count(*) AS n FROM stroke_events').get()!.n).toBe(1);
+  } finally { old.close(); }
+  page.once('dialog', (dialog) => dialog.accept());
+  await page.locator('#reset-local').click();
+  await expect(page.locator('#counts')).toHaveText('0 visible · 0 raw strokes · 0 events');
+  await expect(page.locator('#notice')).toBeHidden();
+  await stroke(page);
+  await page.reload();
+  await expect(page.locator('#counts')).toHaveText('1 visible · 1 raw strokes · 1 events');
 });

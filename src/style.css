@@ -50,3 +50,31 @@ pre { max-width: 100%; overflow: auto; font-size: 10px; line-height: 1.5; paddin
   .export-menu { margin-left: auto; }
   .storage { max-width: 130px; text-align: right; font-size: 10px; }
 }
+
+[hidden] { display: none !important; }
+select { font: inherit; color: inherit; background: #fffefa; border: 1px solid #d9ded7; border-radius: 5px; padding: 7px; max-width: 100%; }
+.tabs { display: flex; gap: 6px; margin-bottom: 18px; border-bottom: 1px solid #dedfd7; padding-bottom: 12px; }
+.tabs button { border-color: transparent; color: #71817c; }
+.tabs button[aria-pressed=true] { background: #e1e9e2; color: #203b42; }
+.page-tools, .board-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 12px 0; font-size: 12px; }
+.toolbar .tools { gap: 12px; }
+.board-controls { color: #71817c; }
+.whiteboard { background-color: white; background-image: radial-gradient(#c7d3cb 1px, transparent 1px); background-size: 20px 20px; }
+#recovery-actions { display: flex; gap: 10px; margin-bottom: 15px; }
+.viewer-description { font-size: 13px; color: #71817c; line-height: 1.6; }
+#viewer-panel h2 { font-size: 20px; }
+.viewer-controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 20px 0; font-size: 12px; }
+.database-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; }
+.database-table { overflow: auto; max-height: 420px; border: 1px solid #d9ded7; border-radius: 6px; }
+table { border-collapse: collapse; width: 100%; font: 11px ui-monospace, monospace; background: #fffefa; }
+th, td { padding: 10px 12px; border-bottom: 1px solid #e8eae2; text-align: left; white-space: nowrap; max-width: 300px; overflow: hidden; text-overflow: ellipsis; }
+th { position: sticky; top: 0; background: #e6ece5; font-weight: 600; }
+tbody tr { cursor: pointer; }
+tbody tr:hover, tbody tr.selected { background: #e8eee8; }
+.record-detail { min-width: 0; }
+.record-detail h3, .record-detail h4 { font-size: 13px; font-weight: 600; }
+.record-detail pre { max-height: 500px; font-size: 11px; }
+.raw-preview { width: 240px; max-width: 100%; aspect-ratio: 1; background: white; border: 1px solid #dedfd7; }
+.local-state summary { cursor: pointer; }
+.local-state button { display: block; margin-top: 10px; }
+@media (max-width: 640px) { .page-tools { gap: 8px; } .toolbar .tools { gap: 10px; } .toolbar { align-items: flex-start; } }

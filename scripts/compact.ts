@@ -2,6 +2,7 @@ import { closeSync, openSync, readFileSync, unlinkSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { Journal, type Row, type SqlDatabase } from '../src/journal.ts';
+import { SCHEMA_VERSION } from '../src/storage/schema.ts';
 
 const [input, output] = process.argv.slice(2);
 if (!input || !output || resolve(input) === resolve(output)) {
@@ -25,7 +26,7 @@ let created = false;
 let success = false;
 try {
   const version = source.prepare('PRAGMA user_version').get()!.user_version;
-  if (version !== 1) throw new Error('Unsupported schema version: ' + version);
+  if (version !== SCHEMA_VERSION) throw new Error('Unsupported schema version: ' + version);
   // Exclusive create: never overwrite an existing database.
   closeSync(openSync(output, 'wx'));
   created = true;

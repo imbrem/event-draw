@@ -1,33 +1,21 @@
-/** Geometry is in fixed page units; browser measurements retain their own units. */
-export interface Sample {
-  x: number;
-  y: number;
+/** Only sensor observations and coordinate transforms belong in raw stroke JSON. */
+export interface Point { x: number; y: number }
+export interface Sample extends Point {
   timeStamp: number;
   pointerId: number;
   pointerType: string;
   isPrimary: boolean;
-  clientX: number;
-  clientY: number;
-  pageX: number;
-  pageY: number;
-  screenX: number;
-  screenY: number;
-  button: number;
-  buttons: number;
-  pressure: number | null;
-  tangentialPressure: number | null;
-  width: number | null;
-  height: number | null;
-  tiltX: number | null;
-  tiltY: number | null;
-  twist: number | null;
-  altitudeAngle: number | null;
-  azimuthAngle: number | null;
+  clientX: number; clientY: number; pageX: number; pageY: number;
+  screenX: number; screenY: number;
+  button: number; buttons: number;
+  pressure: number | null; tangentialPressure: number | null;
+  /** Sensor contact dimensions, NOT painted line width. */
+  width: number | null; height: number | null;
+  tiltX: number | null; tiltY: number | null; twist: number | null;
+  altitudeAngle: number | null; azimuthAngle: number | null;
   persistentDeviceId: number | null;
-  movementX: number | null;
-  movementY: number | null;
+  movementX: number | null; movementY: number | null;
 }
-
 export interface Delivery {
   type: string;
   receivedAt: number;
@@ -36,51 +24,69 @@ export interface Delivery {
   coalesced: Sample[];
   predicted: Sample[];
 }
-
-export interface InkData {
-  deliveries: Delivery[];
+export interface InkData { deliveries: Delivery[] }
+export interface ViewBox extends Point { width: number; height: number }
+export interface Page {
+  id: number; title: string; kind: 'page' | 'whiteboard';
+  width: number | null; height: number | null;
 }
-
-export interface StrokeInput {
-  kind: string;
-  dataVersion: number;
-  status: 'complete' | 'cancelled';
-  color: string;
-  width: number;
+export interface Style { color: string; lineWidth: number }
+export type Tool = 'pen' | 'erase-parts' | 'erase-strokes' | 'pan';
+export interface Gesture {
+  pageId: number;
+  tool: Exclude<Tool, 'pan'>;
+  style: Style;
+  radius: number;
+  cancelled: boolean;
   data: InkData;
 }
-
-export interface VisibleStroke {
+export interface VisibleShape {
   id: number;
-  page_id: number;
-  kind: string;
-  data_version: number;
-  color: string;
-  width: number;
+  raw_stroke_id: number;
+  start_index: number; end_index: number;
+  page_id: number; style_id: number;
+  offset_x: number; offset_y: number;
   paint_order: number;
-  data_json: string;
+  color: string; line_width: number;
+  data_version: number; data_json: string;
 }
-
 export interface CaptureSession {
-  startedAt: string;
-  source: string;
-  timeOriginMs: number;
-  userAgent: string;
-  devicePixelRatio: number;
+  startedAt: string; source: string; timeOriginMs: number;
+  userAgent: string; devicePixelRatio: number;
   capabilities: Record<string, unknown>;
 }
-
 export interface State {
-  strokes: VisibleStroke[];
-  shapeCount: number;
+  pages: Page[];
+  shapes: VisibleShape[];
+  rawCount: number;
   eventCount: number;
-  canUndo: boolean;
+  undoablePages: number[];
+}
+export const EMPTY_STATE: State = {
+  pages: [], shapes: [], rawCount: 0, eventCount: 0, undoablePages: [],
+};
+export type Range = [number, number];
+
+/** Keep summary/rawupdate streams in storage, but avoid drawing both streams. */
+export function measuredSamples(data: InkData): Sample[] {
+  const raw = data.deliveries.some((d) => d.type === 'pointerrawupdate');
+  return data.deliveries.filter((d) => !raw || d.type !== 'pointermove')
+    .flatMap((d) => d.coalesced.length ? d.coalesced : [d.reported]);
 }
 
-/** Coalesced observations replace their summary event, avoiding double drawing. */
-export function measuredSamples(data: InkData): Sample[] {
-  const raw = data.deliveries.some((delivery) => delivery.type === 'pointerrawupdate');
-  return data.deliveries.filter((delivery) => !raw || delivery.type !== 'pointermove').flatMap((delivery) =>
-    delivery.coalesced.length ? delivery.coalesced : [delivery.reported],
-  );
+/** Preserve original browser measurements while making render geometry local. */
+export function localize(data: InkData): { data: InkData; origin: Point } {
+  const first = measuredSamples(data)[0] ?? { x: 0, y: 0 };
+  const origin = { x: first.x, y: first.y };
+  const sample = (s: Sample): Sample => ({ ...s, x: s.x - origin.x, y: s.y - origin.y });
+  return {
+    origin,
+    data: {
+      deliveries: data.deliveries.map((d) => ({
+        ...d,
+        clientToPage: d.clientToPage.map((n, i) => i === 4 ? n - origin.x : i === 5 ? n - origin.y : n),
+        reported: sample(d.reported), coalesced: d.coalesced.map(sample), predicted: d.predicted.map(sample),
+      })),
+    },
+  };
 }
