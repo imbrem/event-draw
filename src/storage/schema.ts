@@ -1,6 +1,6 @@
 import { transaction, type SqlDatabase } from './sql.ts';
 
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 7;
 export function initializeSchema(db: SqlDatabase, schema: string): void {
   const version = Number(db.all('PRAGMA user_version')[0].user_version);
   if (version !== 0 && version !== SCHEMA_VERSION) {

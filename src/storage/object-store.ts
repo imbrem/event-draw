@@ -1,3 +1,4 @@
+import { identifyObject } from './identity.ts';
 import type { ObjectInput, PageObject } from '../model.ts';
 import { insertRow, scalar, transaction, type Row, type SqlDatabase } from './sql.ts';
 
@@ -50,6 +51,7 @@ export class ObjectStore {
       if (!previous) {
         this.db.exec('INSERT INTO page_objects DEFAULT VALUES');
         input = { ...input, id: scalar(this.db, 'SELECT last_insert_rowid()') };
+        identifyObject(this.db, 'page_objects', input.id!);
         for (const shapeId of sources)
           insertRow(this.db, 'object_sources', { object_id: input.id!, shape_id: shapeId });
       }

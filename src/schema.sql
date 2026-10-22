@@ -1,5 +1,26 @@
 PRAGMA foreign_keys = ON;
-PRAGMA user_version = 6;
+PRAGMA user_version = 7;
+
+-- Namespaces include self and foreign notebooks; integers are local aliases only.
+CREATE TABLE IF NOT EXISTS notebook_imports (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  uuid TEXT NOT NULL UNIQUE CHECK(length(uuid)=64 AND uuid NOT GLOB '*[^0-9a-f]*')
+) STRICT;
+CREATE TABLE IF NOT EXISTS notebook_metadata (
+  id INTEGER PRIMARY KEY CHECK(id=1),
+  self_import_id INTEGER NOT NULL UNIQUE REFERENCES notebook_imports(id),
+  created_at TEXT NOT NULL,
+  last_timestamp_us INTEGER NOT NULL CHECK(last_timestamp_us>=0 AND last_timestamp_us<=9007199254740991)
+) STRICT;
+-- Bind a reusable identity to an optional application-local entity.
+CREATE TABLE IF NOT EXISTS object_ids (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  import_id INTEGER NOT NULL REFERENCES notebook_imports(id),
+  timestamp_us INTEGER NOT NULL CHECK(timestamp_us>0 AND timestamp_us<=9007199254740991),
+  kind TEXT NOT NULL,
+  local_id INTEGER,
+  UNIQUE(import_id,timestamp_us), UNIQUE(kind,local_id)
+) STRICT;
 
 -- Content IDs are opaque to readers. The current importer emits sha256:<hex>.
 CREATE TABLE IF NOT EXISTS asset_refs (
@@ -95,6 +116,7 @@ CREATE TABLE IF NOT EXISTS app_events (
   document_id INTEGER REFERENCES documents(id),
   page_id INTEGER REFERENCES pages(id),
   raw_stroke_id INTEGER REFERENCES stroke_events(id),
+  session_id INTEGER REFERENCES capture_sessions(id),
   tool TEXT,
   style_id INTEGER REFERENCES styles(id),
   policy_id INTEGER REFERENCES ink_policies(id),
@@ -122,12 +144,10 @@ CREATE TABLE IF NOT EXISTS app_event_pages (
 CREATE INDEX IF NOT EXISTS page_effect_history ON app_event_pages(page_id,app_event_id DESC);
 CREATE VIEW IF NOT EXISTS current_pages AS
 SELECT e.page_id AS id,e.document_id,e.page_number,e.source_page,e.source_kind,e.source_hash,e.source_json,e.deleted,e.kind,e.width,e.height
-FROM app_event_pages e WHERE NOT EXISTS(SELECT 1 FROM app_event_pages n WHERE n.page_id=e.page_id AND n.app_event_id>e.app_event_id)
-UNION ALL SELECT id,1,1,NULL,'blank',NULL,'{}',0,'page',1000.0,1200.0 FROM pages WHERE id=1 AND NOT EXISTS(SELECT 1 FROM app_event_pages WHERE page_id=1);
+FROM app_event_pages e WHERE NOT EXISTS(SELECT 1 FROM app_event_pages n WHERE n.page_id=e.page_id AND n.app_event_id>e.app_event_id);
 CREATE VIEW IF NOT EXISTS current_documents AS
 SELECT e.document_id AS id,e.name,e.pdf_hash FROM app_event_documents e
-WHERE NOT EXISTS(SELECT 1 FROM app_event_documents n WHERE n.document_id=e.document_id AND n.app_event_id>e.app_event_id)
-UNION ALL SELECT id,'',NULL FROM documents WHERE id=1 AND NOT EXISTS(SELECT 1 FROM app_event_documents WHERE document_id=1);
+WHERE NOT EXISTS(SELECT 1 FROM app_event_documents n WHERE n.document_id=e.document_id AND n.app_event_id>e.app_event_id);
 
 -- Complete placement/style/visibility snapshots make replay and undo simple.
 CREATE TABLE IF NOT EXISTS app_event_shapes (

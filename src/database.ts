@@ -13,6 +13,7 @@ import type { BrowseResult, Row, ViewerTable } from './storage/sql.ts';
 import type { DatabaseDiagnostics } from './storage/diagnostics.ts';
 import { StateDecoder, type StatePatch } from './state-transport.ts';
 import type { InkPolicy } from './ink.ts';
+import type { ReplayReport } from './storage/event-stream.ts';
 
 export type Initialized =
   | {
@@ -20,6 +21,7 @@ export type Initialized =
       state: State;
       sessionId: number;
       storageError: string | null;
+      report?: ReplayReport;
     }
   | { mode: 'blocked' };
 
@@ -64,6 +66,12 @@ export class DatabaseClient {
   }
   openNotebook(bytes: Uint8Array, session: CaptureSession) {
     return this.call<Initialized>('openNotebook', { bytes, session });
+  }
+  openEventStream(text: string, session: CaptureSession) {
+    return this.call<Initialized>('openEventStream', { text, session });
+  }
+  exportEventStream(includeBlobs = true) {
+    return this.call<string>('exportEventStream', includeBlobs);
   }
   setPageSource(pageId: number, source: PageSource) {
     return this.call<State>('setPageSource', { pageId, source });

@@ -1,3 +1,6 @@
+import { DocumentControls } from './ui/document-controls.ts';
+import { FrontendExtensions, type FrontendExtension } from './ui/extensions.ts';
+import { EDIT_COMMANDS, type FrontendHost } from './frontend.ts';
 import { captureSession } from './capture.ts';
 import { DatabaseClient, type Initialized } from './database.ts';
 import { download } from './download.ts';
@@ -26,7 +29,7 @@ import { PageBrowser } from './ui/page-browser.ts';
 import { PdfText } from './ui/pdf-text.ts';
 import type { ClipboardInk } from './model.ts';
 
-export function startApp(): () => void {
+export function startApp(config: { extensions?: readonly FrontendExtension[] } = {}): () => void {
   mountShell();
   const db = new DatabaseClient(),
     pdfs = new PdfLibrary(db),
@@ -51,12 +54,17 @@ export function startApp(): () => void {
     unsaved: Gesture[] = [],
     selected = new Set<number>();
   let operations: Promise<void> = Promise.resolve();
-  let shownDocument = '';
+  let extensions: FrontendExtensions | undefined;
   const views = new PageViews(),
     canvas = element<HTMLCanvasElement>('canvas');
   const notice = element('notice'),
     options = element<HTMLDetailsElement>('options');
-  const documentSelect = element<HTMLSelectElement>('document');
+  const documentControls = new DocumentControls(
+    (id) => chooseDocument(id),
+    (id, name) => {
+      void edit(() => db.renameDocument(id, name), undefined, false);
+    },
+  );
   const currentDocument = (): Document | undefined => state.documents.find((d) => d.id === documentId);
   const pages = () => state.pages.filter((p) => p.document_id === documentId);
   const page = (): Page | undefined => pages().find((p) => p.id === pageId);
@@ -71,7 +79,7 @@ export function startApp(): () => void {
     selected.clear();
     refresh();
   });
-  const paints = new PaintControls(element('color'), element('width'));
+  const paints = new PaintControls(element('color'), element('width'), element('color-palette'));
   const inkControls = new InkControls(element('ink-policies'));
   const lassoLabels: Record<string, string> = {
     'touch-or-enclose@1': 'Touch or enclose',
@@ -311,6 +319,8 @@ export function startApp(): () => void {
       'zoom-out',
       'home-view',
       'toggle-text',
+      'insert-page-text',
+      'jsonl-file',
       'lasso-policy',
     ]) {
       (element(id) as HTMLInputElement | HTMLButtonElement | HTMLSelectElement).disabled = busy;
@@ -336,7 +346,7 @@ export function startApp(): () => void {
     element('selection-controls').hidden = tools.value !== 'lasso';
     element('selection-count').textContent = selected.size + ' selected';
     element<HTMLButtonElement>('export-full').disabled = !ready || active || writes > 0 || importing;
-    for (const id of ['export-visible', 'export-drawn', 'export-pdf', 'browse-pages'])
+    for (const id of ['export-visible', 'export-drawn', 'export-pdf', 'export-jsonl', 'browse-pages'])
       element<HTMLButtonElement>(id).disabled = busy;
     for (const id of ['reset-settings', 'reset-local', 'export-existing']) {
       element<HTMLButtonElement>(id).disabled =
@@ -362,16 +372,8 @@ export function startApp(): () => void {
                   : background === 'error'
                     ? 'Background unavailable'
                     : 'Saved';
-    documentSelect.replaceChildren(
-      ...state.documents.map(
-        (d) => new Option(d.name || 'Blank notes', String(d.id), false, d.id === documentId),
-      ),
-    );
-    const documentKey = documentId + ':' + currentDocument()?.name;
-    if (documentKey !== shownDocument) {
-      shownDocument = documentKey;
-      element<HTMLInputElement>('document-name').value = currentDocument()?.name ?? '';
-    }
+    documentControls.update(state.documents, documentId, busy);
+    paints.update(busy);
     element('document-hash').textContent =
       page()?.source_hash ?? 'Page source: ' + (page()?.source_kind ?? 'blank');
     element('page-heading').textContent = (currentDocument()?.name ?? '') + '/' + (page()?.page_number ?? 1);
@@ -379,7 +381,7 @@ export function startApp(): () => void {
     if (ready) location.write(documentId, pageId);
     element('board-controls').hidden = !board;
     const painting = ['pen', 'highlighter', 'restyle'].includes(tools.value);
-    element('color-control').hidden = !painting;
+    element('paint-toolbar').hidden = !painting;
     element('width-control').hidden = !painting;
     element('eraser-control').hidden = !tools.value.startsWith('erase') && tools.value !== 'restyle';
     const box = view();
@@ -389,6 +391,7 @@ export function startApp(): () => void {
       'x ' + Math.round(box.x) + ', y ' + Math.round(box.y) + ' · ' + Math.round(100000 / box.width) + '%';
     surface.update(page(), currentDocument());
     notebook.repaint();
+    extensions?.update({ state, documentId, pageId, sessionId, ready, busy });
     pdfText.update(page(), element<HTMLInputElement>('select-pdf-text').checked);
     pageObjects.update(
       state.objects.filter((o) => o.page_id === pageId),
@@ -442,6 +445,15 @@ export function startApp(): () => void {
         notice.textContent =
           'Persistent browser storage is unavailable. Export before closing. Use HTTPS or localhost.';
       element('recovery-actions').hidden = true;
+      if (result.report) {
+        const { accepted, skipped, missingLinks, recoveryPage } = result.report;
+        const message = `Reconstructed ${accepted} edits; ${skipped.length} skipped, ${missingLinks} missing links.${recoveryPage ? ' Added a blank recovery page.' : ''}`;
+        element('replay-report').textContent = message;
+        if (skipped.length || missingLinks || recoveryPage) {
+          notice.hidden = false;
+          notice.textContent = message;
+        }
+      }
     }
     refresh();
   }
@@ -500,15 +512,17 @@ export function startApp(): () => void {
     refresh();
   }
   element('toggle-text').onclick = () => showText(Boolean(element('text-panel').hidden));
+  const insertText = async () => {
+    showText(true);
+    await textEditor.create(true);
+  };
+  element('insert-page-text').onclick = () => {
+    void insertText();
+  };
   element('show-boxes').onchange = () => refresh();
   element('select-pdf-text').onchange = () => refresh();
   element('browse-pages').onclick = () => {
     void browser.show(state, documentId).catch(error);
-  };
-  documentSelect.onchange = () => chooseDocument(Number(documentSelect.value));
-  element('rename-document').onclick = () => {
-    const name = element<HTMLInputElement>('document-name').value;
-    void edit(() => db.renameDocument(documentId, name), undefined, false);
   };
   element('new-document').onclick = () => {
     void edit(
@@ -626,6 +640,23 @@ export function startApp(): () => void {
       error(value);
     }
   }
+  element('export-jsonl').onclick = () => {
+    void (async () => {
+      try {
+        await textEditor.flushAll();
+        await operations;
+        if (textEditor.dirty) throw new Error('Save text drafts before exporting events.');
+        download(
+          await db.exportEventStream(element<HTMLInputElement>('include-blobs').checked),
+          'application/x-ndjson',
+          'event-draw.jsonl',
+        );
+        document.querySelector<HTMLDetailsElement>('.export-menu')!.open = false;
+      } catch (value) {
+        error(value);
+      }
+    })();
+  };
   element('export-full').onclick = () => {
     void exportDb('full');
   };
@@ -825,6 +856,43 @@ export function startApp(): () => void {
     if (active || writes || unsaved.length || importing || textEditor.dirty) event.preventDefault();
   };
   window.addEventListener('beforeunload', unload);
+  const frontendSnapshot = () => ({
+    state,
+    documentId,
+    pageId,
+    sessionId,
+    ready,
+    busy: !ready || failed || active || writes > 0 || resetting || importing,
+  });
+  const host: FrontendHost = {
+    snapshot: frontendSnapshot,
+    subscribe: () => () => {}, // Each extension gets its own managed subscription.
+    async execute(command, args) {
+      if (!EDIT_COMMANDS.includes(command) || frontendSnapshot().busy) throw new Error('Edit unavailable');
+      let failure: unknown;
+      await edit(
+        async () => {
+          try {
+            return await (db[command] as (...values: unknown[]) => Promise<State>).apply(db, [...args]);
+          } catch (value) {
+            failure = value;
+            throw value;
+          }
+        },
+        undefined,
+        false,
+      );
+      if (failure) throw failure;
+    },
+    navigate(id) {
+      const target = state.pages.find((p) => p.id === id);
+      if (!target || frontendSnapshot().busy) return;
+      documentId = target.document_id;
+      selectPage(id);
+    },
+    insertText,
+  };
+  extensions = new FrontendExtensions(element('frontend-extensions'), config.extensions ?? [], host);
   void db
     .init(session)
     .then(open)
@@ -837,6 +905,7 @@ export function startApp(): () => void {
     });
   refresh();
   return () => {
+    extensions?.close();
     files.close();
     document.removeEventListener('visibilitychange', backgroundSave);
     closeShortcuts();

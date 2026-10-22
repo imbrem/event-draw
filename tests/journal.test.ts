@@ -15,7 +15,7 @@ test('raw capture is local and style/tool/page placement live in app records', (
     assert.equal(raw.deliveries[1].reported.x, 100);
     assert.equal(raw.deliveries[0].reported.clientX, 100);
     assert.deepEqual(shapePath(d.journal.visible()[0]), [{ x: 100, y: 200 }, { x: 200, y: 220 }]);
-    const event = d.db.all('SELECT * FROM app_events')[0];
+    const event = d.db.all("SELECT * FROM app_events WHERE kind='stroke.add'")[0];
     assert.equal(event.tool, 'pen');
     assert.equal(event.page_id, 1);
     assert.equal(event.raw_stroke_id, 1);
@@ -69,10 +69,10 @@ test('cancelled inputs preserve captures but do not edit visible shapes or undo 
     input.cancelled = true;
     const state = d.journal.gesture(input, d.sessionId);
     assert.equal(state.rawCount, 1);
-    assert.equal(state.eventCount, 1);
+    assert.equal(state.eventCount, 3);
     assert.deepEqual(state.undoablePages, []);
     assert.deepEqual(state.shapes, []);
-    assert.equal(d.db.all('SELECT kind FROM app_events')[0].kind, 'input.cancel');
+    assert.equal(d.db.all('SELECT kind FROM app_events ORDER BY id DESC LIMIT 1')[0].kind, 'input.cancel');
   } finally { d.close(); }
 });
 
@@ -85,7 +85,6 @@ test('snapshot preserves pages, raw dependencies, fragments, style and placement
     source.journal.gesture(gesture([[-200, -100], [400, 200]], 'pen', 2), source.sessionId);
     source.journal.clear(2);
     source.journal.undo(2);
-    target.db.exec('DELETE FROM capture_sessions');
     source.journal.snapshotInto(target.db);
     assert.deepEqual(source.journal.visible(), target.journal.visible());
     assert.deepEqual(source.journal.state().pages, target.journal.state().pages);
@@ -106,7 +105,7 @@ test('failed gesture rolls back raw, semantic and geometry records together', ()
   try {
     assert.throws(() => d.journal.gesture(gesture([[0, 0], [10, 10]]), 9999), /FOREIGN KEY/);
     assert.equal(d.journal.state().rawCount, 0);
-    assert.equal(d.journal.state().eventCount, 0);
+    assert.equal(d.journal.state().eventCount, 2);
     assert.equal(d.journal.visible().length, 0);
   } finally { d.close(); }
 });
@@ -116,7 +115,7 @@ test('database viewer is read only and restricts table names and pagination', ()
   try {
     d.journal.gesture(gesture([[0, 0], [10, 10]]), d.sessionId);
     assert.equal(d.journal.browse('stroke_events').total, 1);
-    assert.equal(d.journal.related(1)[0].raw_stroke_id, 1);
+    assert.equal(d.journal.related(3)[0].raw_stroke_id, 1);
     assert.throws(() => d.journal.browse('app_events; DROP TABLE pages' as never), /Unknown/);
     assert.throws(() => d.journal.browse('pages', -1), /pagination/);
     assert.equal(d.journal.browse('pages').total, 1);
@@ -134,7 +133,7 @@ test('lasso records references, move preserves raw identity, and delete/undo are
     const raw = d.db.all('SELECT * FROM stroke_events WHERE id = 1')[0];
     const lasso = gesture([[40, 40], [60, 40], [60, 60], [40, 60]], 'lasso');
     d.journal.gesture(lasso, d.sessionId);
-    assert.deepEqual(d.journal.related(5).map((r) => r.shape_id), [1]);
+    assert.deepEqual(d.journal.related(7).map((r) => r.shape_id), [1]);
     assert.deepEqual(d.journal.visible(1), original);
     const move = gesture([[50, 50], [70, 80]], 'move-selection');
     move.shapeIds = [1, 3, 999]; // foreign page / stale IDs cannot be edited
@@ -166,7 +165,6 @@ test('compact moved fragments retain source bytes and discard selection/drag his
     const move = gesture([[10, 50], [-90, -50]], 'move-selection');
     move.shapeIds = ids;
     source.journal.gesture(move, source.sessionId);
-    target.db.exec('DELETE FROM capture_sessions');
     source.journal.snapshotInto(target.db);
     assert.deepEqual(target.journal.visible(), source.journal.visible());
     assert.equal(target.journal.state().rawCount, 1);

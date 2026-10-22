@@ -9,6 +9,11 @@ import { replaceNotebook, validateNotebook } from './storage/notebooks.ts';
 import { StateEncoder } from './state-transport.ts';
 import type { State } from './model.ts';
 import { verifyContent } from './content.ts';
+import { createNotebookExchange } from './storage/event-stream.ts';
+
+// Build-time host choice. A research build can install a different source/sink,
+// payload binding set, framing codec, or inbound/outbound transformation stages.
+const exchange = createNotebookExchange();
 
 const scope = self as unknown as DedicatedWorkerGlobalScope;
 function adapter(db: Database): SqlDatabase {
@@ -79,7 +84,11 @@ async function handle(request: { id: number; method: string; payload: any }) {
       throw new Error('Notebook already open in another tab. Close it and reload.');
     }
     const { sqlite, db } = context;
-    if (!retained || retained.db !== db || ['init', 'reset', 'openNotebook'].includes(request.method))
+    if (
+      !retained ||
+      retained.db !== db ||
+      ['init', 'reset', 'openNotebook', 'openEventStream'].includes(request.method)
+    )
       retained = { db, journal: new Journal(adapter(db)) };
     const journal = retained.journal;
     let value: unknown;
@@ -88,14 +97,45 @@ async function handle(request: { id: number; method: string; payload: any }) {
       case 'reset': {
         if (request.method === 'reset') resetSchema(adapter(db), schema);
         else initializeSchema(adapter(db), schema);
+        const sessionId = journal.startSession(
+          request.payload as CaptureSession,
+          request.method === 'init' ? 'app.open' : 'notebook.open',
+        );
         value = {
           mode: context.mode,
           state: journal.state(),
-          sessionId: journal.startSession(request.payload as CaptureSession),
+          sessionId,
           storageError: context.storageError,
         };
         break;
       }
+      case 'openEventStream': {
+        const input = new sqlite.oo1.DB(':memory:');
+        try {
+          input.exec(schema);
+          const report = exchange.reconstruct(
+            exchange.codec.decode(String(request.payload.text).split('\n')),
+            adapter(input),
+          );
+          for (const row of input.selectObjects('SELECT hash,data FROM blobs'))
+            await verifyContent(String(row.hash), row.data as Uint8Array);
+          replaceNotebook(adapter(input), adapter(db));
+          const sessionId = journal.startSession(request.payload.session, 'notebook.open');
+          value = {
+            mode: context.mode,
+            state: journal.state(),
+            sessionId,
+            storageError: context.storageError,
+            report,
+          };
+        } finally {
+          input.close();
+        }
+        break;
+      }
+      case 'exportEventStream':
+        value = [...exchange.codec.encode(exchange.collect(adapter(db), request.payload !== false))].join('');
+        break;
       case 'openNotebook': {
         const bytes = request.payload.bytes as Uint8Array;
         if (
@@ -127,10 +167,11 @@ async function handle(request: { id: number; method: string; payload: any }) {
               await verifyContent(String(row.hash), blob);
             }
           replaceNotebook(adapter(input), adapter(db));
+          const sessionId = journal.startSession(request.payload.session, 'notebook.open');
           value = {
             mode: context.mode,
             state: journal.state(),
-            sessionId: journal.startSession(request.payload.session),
+            sessionId,
             storageError: context.storageError,
           };
         } finally {

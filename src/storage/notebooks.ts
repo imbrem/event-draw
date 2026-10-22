@@ -1,3 +1,4 @@
+import { MUTABLE_TABLES } from './identity.ts';
 import { insertRow, scalar, transaction, type SqlDatabase } from './sql.ts';
 import { SCHEMA_VERSION } from './schema.ts';
 import { measuredSamples, type InkData } from '../model.ts';
@@ -26,6 +27,32 @@ export function validateNotebook(source: SqlDatabase, expected: SqlDatabase) {
     source.all('PRAGMA foreign_key_check').length
   )
     throw new Error('Notebook integrity check failed');
+  if (source.all('SELECT * FROM notebook_metadata').length !== 1)
+    throw new Error('Notebook identity is missing');
+  const metadata = source.all('SELECT * FROM notebook_metadata')[0];
+  if (
+    !Number.isFinite(Date.parse(String(metadata.created_at))) ||
+    scalar(source, 'SELECT coalesce(max(timestamp_us),0) FROM object_ids WHERE import_id=?', [
+      metadata.self_import_id,
+    ]) > Number(metadata.last_timestamp_us)
+  )
+    throw new Error('Invalid notebook creation time or object clock');
+  for (const table of MUTABLE_TABLES)
+    if (
+      source.all(
+        'SELECT id FROM ' +
+          table +
+          ' WHERE id NOT IN (SELECT local_id FROM object_ids WHERE kind=? AND local_id IS NOT NULL)',
+        [table],
+      ).length
+    )
+      throw new Error('Missing object identity: ' + table);
+  if (
+    source.all(
+      "SELECT * FROM object_ids WHERE kind NOT IN ('documents','pages','shapes','page_objects') AND local_id IS NOT NULL",
+    ).length
+  )
+    throw new Error('Invalid materialized object kind');
   if (!source.all('SELECT id FROM current_pages WHERE deleted=0').length)
     throw new Error('Notebook has no active pages');
   for (const page of source.all('SELECT * FROM current_pages')) {
@@ -120,4 +147,12 @@ export function replaceNotebook(source: SqlDatabase, target: SqlDatabase) {
     if (target.all('PRAGMA foreign_key_check').length)
       throw new Error('Imported notebook references missing records');
   });
+}
+
+/** Internal schema names only. Call inside a replacement transaction. */
+export function clearNotebookRows(db: SqlDatabase) {
+  db.exec('PRAGMA defer_foreign_keys=ON');
+  const tables = db.all("SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'");
+  for (const { name } of tables.reverse()) db.exec('DELETE FROM ' + name);
+  db.exec('DELETE FROM sqlite_sequence');
 }

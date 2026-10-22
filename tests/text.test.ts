@@ -10,7 +10,7 @@ test('multiple page objects share immutable content while placement, linked note
     d.journal.setObject(note('# First $x=5$'));
     const first = d.journal.state().objects[0];
     d.journal.setObject(note('# First $x=5$', 1, first.id));
-    assert.equal(d.journal.state().eventCount, 2);
+    assert.equal(d.journal.state().eventCount, 4);
     d.journal.setObject(note('# First $x=5$', 1, undefined, true));
     const onPage = d.journal.state().objects[1];
     assert.equal(first.content_id, onPage.content_id);
@@ -21,8 +21,7 @@ test('multiple page objects share immutable content while placement, linked note
     assert.equal(d.journal.state().objects.length, 2);
     d.journal.undo(1); assert.equal(JSON.parse(d.journal.state().objects[0].data_json).source, 'Revision');
     d.journal.undo(1); assert.deepEqual(d.journal.state().objects[0], first);
-    assert.equal(d.journal.state().objects[2].page_id, 2);
-    compact.db.exec('DELETE FROM capture_sessions'); d.journal.snapshotInto(compact.db);
+    assert.equal(d.journal.state().objects[2].page_id, 2); d.journal.snapshotInto(compact.db);
     assert.deepEqual(compact.journal.state().objects, d.journal.state().objects);
     assert.equal(compact.db.all('SELECT * FROM object_contents').length, 2);
     assert.deepEqual(compact.db.all('PRAGMA foreign_key_check'), []);
@@ -43,8 +42,7 @@ test('content provenance retains deleted source geometry through compaction with
     d.journal.gesture(gesture([[10, 20], [30, 40]]), d.sessionId);
     d.journal.setObject({ ...note('x = 5'), format: 'math/latex', sourceShapeIds: [1] });
     d.journal.deleteShapes(1, [1]);
-    assert.equal(d.journal.visible().length, 0);
-    compact.db.exec('DELETE FROM capture_sessions'); d.journal.snapshotInto(compact.db);
+    assert.equal(d.journal.visible().length, 0); d.journal.snapshotInto(compact.db);
     assert.equal(compact.journal.visible().length, 0); assert.equal(compact.journal.state().rawCount, 1);
     assert.deepEqual(compact.db.all('SELECT * FROM object_sources'), d.db.all('SELECT * FROM object_sources'));
     assert.deepEqual(compact.db.all('PRAGMA foreign_key_check'), []);

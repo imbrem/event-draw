@@ -168,7 +168,6 @@ test('mixed extensible page sources are journaled; optional blobs and drawn-only
     );
     source.journal.setObject({ ...note('derived display', 2, undefined, true), sourceShapeIds: [2] });
     source.journal.deleteShapes(2, [2]);
-    target.db.exec('DELETE FROM capture_sessions');
     source.journal.snapshotInto(target.db, { drawnOnly: true });
     assert.deepEqual(target.journal.visible(), source.journal.visible());
     assert.equal(target.journal.state().objects.length, 3);

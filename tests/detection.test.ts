@@ -15,8 +15,8 @@ test('box script recognizes a closed rotated outline and keeps raw trace observa
     const box = state.boxes[0]; assert.ok(Math.abs(box.rotation - Math.PI / 6) < 1e-8);
     assert.ok(Math.abs(box.width - 200) < 1e-8); assert.ok(Math.abs(box.height - 120) < 1e-8);
     assert.equal(box.shape_ids, '[1]');
-    assert.deepEqual(d.db.all('SELECT kind, cause_event_id FROM app_events').map((r) => ({ ...r })), [
-      { kind: 'stroke.add', cause_event_id: null }, { kind: 'box.finish', cause_event_id: 1 },
+    assert.deepEqual(d.db.all("SELECT kind, cause_event_id FROM app_events WHERE kind NOT IN ('notebook.create','app.open')").map((r) => ({ ...r })), [
+      { kind: 'stroke.add', cause_event_id: null }, { kind: 'box.finish', cause_event_id: 3 },
     ]);
     assert.equal(d.db.all('SELECT status FROM detection_runs')[0].status, 'ok');
     assert.doesNotMatch(String(d.db.all('SELECT data_json FROM stroke_events')[0].data_json), /box|detector|confidence/);
@@ -34,8 +34,7 @@ test('four constituent strokes finish a box; erasing even a small constituent pa
     assert.equal(d.journal.state().boxes.length, 0);
     assert.equal(d.db.all("SELECT count(*) AS n FROM app_events WHERE kind = 'box.break'")[0].n, 1);
     assert.equal(d.db.all('SELECT * FROM detected_boxes').length, 1);
-    d.journal.undo(1); assert.deepEqual(d.journal.state().boxes, initial);
-    compact.db.exec('DELETE FROM capture_sessions'); d.journal.snapshotInto(compact.db);
+    d.journal.undo(1); assert.deepEqual(d.journal.state().boxes, initial); d.journal.snapshotInto(compact.db);
     assert.deepEqual(compact.journal.state().boxes, initial);
     assert.deepEqual(compact.journal.visible(), d.journal.visible());
     assert.deepEqual(compact.db.all('PRAGMA foreign_key_check'), []);
@@ -92,8 +91,7 @@ test('compact detection provenance preserves all inputs from its run, including 
     d.journal.gesture(gesture([[600, 600], [700, 700]]), d.sessionId);
     d.journal.gesture(gesture(square), d.sessionId);
     d.journal.deleteShapes(1, [1]);
-    d.journal.setObject({ ...note('Recognized'), sourceShapeIds: [2] });
-    compact.db.exec('DELETE FROM capture_sessions'); d.journal.snapshotInto(compact.db);
+    d.journal.setObject({ ...note('Recognized'), sourceShapeIds: [2] }); d.journal.snapshotInto(compact.db);
     assert.equal(compact.journal.state().rawCount, 2); assert.equal(compact.journal.visible().length, 1);
     assert.deepEqual(compact.journal.state().boxes, d.journal.state().boxes);
     assert.deepEqual(compact.db.all('PRAGMA foreign_key_check'), []);

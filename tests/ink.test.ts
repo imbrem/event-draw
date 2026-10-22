@@ -45,7 +45,7 @@ test('malformed processors retain raw contact and persist a rejected output inst
     input.policy = { ...DEFAULT_INK_POLICY, smoothing: { id: 'broken@1', options: {} } };
     const state = d.journal.gesture(input, d.sessionId);
     assert.equal(state.rawCount, 1); assert.equal(state.shapes.length, 0);
-    assert.equal(d.db.all('SELECT kind FROM app_events')[0].kind, 'input.reject');
+    assert.equal(d.db.all('SELECT kind FROM app_events ORDER BY id DESC LIMIT 1')[0].kind, 'input.reject');
     assert.match(String(d.db.all('SELECT rejection_reason FROM ink_outputs')[0].rejection_reason), /invalid geometry/);
     assert.equal(JSON.parse(String(d.db.all('SELECT data_json FROM stroke_events')[0].data_json)).deliveries[1].reported.clientX, 120);
     input.policy = { ...DEFAULT_INK_POLICY, rejection: { id: 'pen-only@1', options: {} } };
@@ -75,8 +75,7 @@ test('group reprocessing preserves erased source intervals, placement, old outpu
     }
     assert.deepEqual(source.db.all('SELECT * FROM stroke_events'), raw);
     assert.equal(source.journal.outputs(1).length, 2);
-    source.journal.setObject(note('**Kept** $x=5$'));
-    target.db.exec('DELETE FROM capture_sessions'); source.journal.snapshotInto(target.db);
+    source.journal.setObject(note('**Kept** $x=5$')); source.journal.snapshotInto(target.db);
     assert.deepEqual(target.journal.visible(), next);
     assert.deepEqual(target.journal.state().objects, source.journal.state().objects);
     assert.equal(target.journal.outputs(1).length, 1); // only currently needed result
@@ -156,7 +155,7 @@ test('highlighter stores paint outside the raw trace and processing geometry', (
     const output = JSON.parse(shape.output_json); assert.deepEqual(Object.keys(output), ['kind', 'points']);
     assert.deepEqual(Object.keys(output.points[0]), ['x', 'y', 'sourceIndex', 'widthFactor']);
     assert.doesNotMatch(shape.data_json, /highlighter|opacity|color|lineWidth|policy/);
-    assert.equal(d.db.all('SELECT tool FROM app_events')[0].tool, 'highlighter');
+    assert.equal(d.db.all('SELECT tool FROM app_events ORDER BY id DESC LIMIT 1')[0].tool, 'highlighter');
   } finally { d.close(); }
 });
 

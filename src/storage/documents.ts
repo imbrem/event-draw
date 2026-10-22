@@ -1,3 +1,4 @@
+import { identifyObject } from './identity.ts';
 import type { Document, Page, PdfImport, AssetImport, PageSource } from '../model.ts';
 import { insertRow, scalar, transaction, type Row, type SqlDatabase } from './sql.ts';
 
@@ -56,6 +57,7 @@ export class DocumentStore {
     return transaction(this.db, () => {
       insertRow(this.db, 'documents', { name: this.uniqueName(name), pdf_hash: null });
       const id = scalar(this.db, 'SELECT last_insert_rowid()');
+      identifyObject(this.db, 'documents', id);
       this.insertPage(id, 1, 1000, 1200);
       this.effect(this.record('document.add', id), id);
       return id;
@@ -106,6 +108,7 @@ export class DocumentStore {
       this.putAsset(input.hash, 'application/pdf', input.bytes);
       insertRow(this.db, 'documents', { name: this.uniqueName(input.name), pdf_hash: input.hash });
       const id = scalar(this.db, 'SELECT last_insert_rowid()');
+      identifyObject(this.db, 'documents', id);
       input.pages.forEach((s, i) => this.insertPage(id, i + 1, s.width, s.height, 'pdf', input.hash, i + 1));
       this.effect(this.record('document.import', id), id);
       return id;
@@ -219,7 +222,9 @@ export class DocumentStore {
       width,
       height,
     });
-    return scalar(this.db, 'SELECT last_insert_rowid()');
+    const id = scalar(this.db, 'SELECT last_insert_rowid()');
+    identifyObject(this.db, 'pages', id);
+    return id;
   }
   addPage(documentId: number, afterPageId: number, width: number | null, height: number | null): number {
     return transaction(this.db, () => {

@@ -32,6 +32,16 @@ export class NotebookFiles {
         return db.openNotebook(new Uint8Array(await file.arrayBuffer()), session);
       }, file.name);
     };
+    element<HTMLInputElement>('jsonl-file').onchange = () => {
+      const input = element<HTMLInputElement>('jsonl-file'),
+        file = input.files?.[0];
+      input.value = '';
+      if (!file) return;
+      void this.replace(async () => {
+        if (file.size > 512 * 1024 * 1024) throw new Error('Event stream exceeds 512 MiB');
+        return db.openEventStream(await file.text(), session);
+      }, file.name);
+    };
     element('new-notebook').onclick = () => {
       void this.replace(() => db.reset(session), 'New notebook');
     };

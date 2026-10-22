@@ -20,10 +20,9 @@ test('diagnostics distinguish visible ink captures, raw tool inputs and derived 
     assert.equal(stats.visibleRawCaptures, 1);
     assert.equal(stats.shapes, 4);
     assert.equal(stats.visibleShapes, 2);
-    assert.equal(stats.appEvents, 5);
+    assert.equal(stats.appEvents, 7);
     assert.equal(stats.rawBytes, source.db.all('SELECT data_json FROM stroke_events')
-      .reduce((n, row) => n + new TextEncoder().encode(String(row.data_json)).length, 0));
-    compact.db.exec('DELETE FROM capture_sessions'); source.journal.snapshotInto(compact.db);
+      .reduce((n, row) => n + new TextEncoder().encode(String(row.data_json)).length, 0)); source.journal.snapshotInto(compact.db);
     const current = compact.journal.diagnostics();
     assert.equal(current.visibleShapes, stats.visibleShapes);
     assert.equal(current.visibleRawCaptures, stats.visibleRawCaptures);

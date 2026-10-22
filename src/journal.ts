@@ -1,3 +1,6 @@
+import { snapshotNotebook, type SnapshotOptions } from './storage/snapshot.ts';
+import { recordEvent, initializeNotebook, type EventOptions } from './storage/events.ts';
+import { identifyObject } from './storage/identity.ts';
 import {
   localize,
   measuredSamples,
@@ -47,20 +50,6 @@ import {
 } from './storage/sql.ts';
 export type { Row, SqlDatabase, SqlValue } from './storage/sql.ts';
 
-interface EventOptions {
-  documentId?: number;
-  pageId?: number;
-  rawId?: number;
-  tool?: string;
-  styleId?: number;
-  radius?: number;
-  policyId?: number;
-  cause?: number;
-  undoable?: boolean;
-  undoOf?: number;
-  redoOf?: number;
-  data?: unknown;
-}
 interface Placement {
   id: number;
   page_id: number;
@@ -116,37 +105,25 @@ export class Journal {
     return scalar(this.db, 'SELECT last_insert_rowid()');
   }
 
-  startSession(session: CaptureSession): number {
-    insertRow(this.db, 'capture_sessions', {
-      started_at: session.startedAt,
-      source: session.source,
-      time_origin_ms: session.timeOriginMs,
-      user_agent: session.userAgent,
-      device_pixel_ratio: session.devicePixelRatio,
-      capabilities_json: JSON.stringify(session.capabilities),
+  startSession(session: CaptureSession, kind: 'app.open' | 'notebook.open' = 'app.open'): number {
+    return transaction(this.db, () => {
+      initializeNotebook(this.db);
+      insertRow(this.db, 'capture_sessions', {
+        started_at: session.startedAt,
+        source: session.source,
+        time_origin_ms: session.timeOriginMs,
+        user_agent: session.userAgent,
+        device_pixel_ratio: session.devicePixelRatio,
+        capabilities_json: JSON.stringify(session.capabilities),
+      });
+      const id = this.lastId();
+      this.event(kind, { sessionId: id });
+      return id;
     });
-    return this.lastId();
   }
   private event(kind: string, options: EventOptions = {}): number {
     this.historyCache = null;
-    insertRow(this.db, 'app_events', {
-      occurred_at: new Date().toISOString(),
-      kind,
-      document_id: options.documentId ?? null,
-      page_id: options.pageId ?? null,
-      raw_stroke_id: options.rawId ?? null,
-      tool: options.tool ?? null,
-      style_id: options.styleId ?? null,
-      eraser_radius: options.radius ?? null,
-      policy_id: options.policyId ?? null,
-      cause_event_id: options.cause ?? null,
-      undoable: options.undoable ? 1 : 0,
-      undo_of_event_id: options.undoOf ?? null,
-      redo_of_event_id: options.redoOf ?? null,
-      data_version: 1,
-      data_json: JSON.stringify(options.data ?? {}),
-    });
-    return this.lastId();
+    return recordEvent(this.db, kind, options);
   }
   private style(style: Style): number {
     const values = [style.color, style.lineWidth, style.opacity ?? 1, style.blendMode ?? 'source-over'];
@@ -162,7 +139,9 @@ export class Journal {
   }
   private shape(outputId: number, start: number, end: number): number {
     insertRow(this.db, 'shapes', { output_id: outputId, start_index: start, end_index: end });
-    return this.lastId();
+    const id = this.lastId();
+    identifyObject(this.db, 'shapes', id);
+    return id;
   }
   private effect(eventId: number, shape: Placement, visible: boolean): void {
     insertRow(this.db, 'app_event_shapes', {
@@ -714,6 +693,8 @@ export class Journal {
     ) as unknown as VisibleShape[];
   }
   state(): State {
+    if (!this.db.all('SELECT id FROM notebook_metadata').length)
+      transaction(this.db, () => initializeNotebook(this.db));
     const pages = this.documents.pages(),
       stacks = this.historyStacks();
     return {
@@ -806,96 +787,7 @@ export class Journal {
       ),
     };
   }
-  /** Retain raw dependencies, derived ranges, styles and page/placement state. */
-  snapshotInto(target: SqlDatabase, options: { drawnOnly?: boolean; includeBlobs?: boolean } = {}): void {
-    transaction(target, () => {
-      target.exec('DELETE FROM pages');
-      target.exec('DELETE FROM documents');
-      const objectView = options.drawnOnly ? 'drawn_objects' : 'visible_objects',
-        boxView = options.drawnOnly ? '(SELECT * FROM active_boxes WHERE 0)' : 'active_boxes';
-      const pageQuery = 'SELECT * FROM current_pages' + (options.drawnOnly ? ' WHERE deleted=0' : '');
-      const refs = `SELECT source_hash AS hash FROM (${pageQuery}) WHERE source_hash IS NOT NULL UNION SELECT json_extract(data_json,'$.hash') FROM ${objectView} WHERE format='image/asset'${options.drawnOnly ? '' : ' UNION SELECT pdf_hash FROM current_documents WHERE pdf_hash IS NOT NULL'}`;
-      const documents = this.db
-        .all('SELECT * FROM current_documents ORDER BY id')
-        .map((row) => (options.drawnOnly ? { ...row, pdf_hash: null } : row));
-      for (const row of this.db.all('SELECT * FROM asset_refs WHERE hash IN (' + refs + ')'))
-        insertRow(target, 'asset_refs', row);
-      const hasBlobs = this.db.all(
-        "SELECT name FROM sqlite_schema WHERE name='blobs' AND type='table'",
-      ).length;
-      if (options.includeBlobs !== false && hasBlobs)
-        for (const row of this.db.all('SELECT * FROM blobs WHERE hash IN (' + refs + ')'))
-          insertRow(target, 'blobs', row);
-      for (const row of documents) insertRow(target, 'documents', row);
-      for (const row of this.db.all(pageQuery + ' ORDER BY id')) insertRow(target, 'pages', row);
-      const required = options.drawnOnly
-        ? 'SELECT id FROM visible_shapes'
-        : `SELECT id FROM visible_shapes UNION
-        SELECT s.shape_id FROM object_sources s JOIN ${objectView} o ON o.id = s.object_id UNION
-        SELECT s.shape_id FROM box_shapes s JOIN ${boxView} b ON b.id = s.box_id UNION
-        SELECT json_extract(j.value, '$[0]') FROM ${boxView} b JOIN detection_runs r ON r.id = b.run_id, json_each(r.input_key) j`;
-      const queries: [string, string][] = [
-        [
-          'capture_sessions',
-          `SELECT DISTINCT c.* FROM capture_sessions c JOIN stroke_events r ON r.capture_session_id = c.id
-          JOIN ink_outputs o ON o.raw_stroke_id = r.id JOIN shapes s ON s.output_id = o.id WHERE s.id IN (${required})`,
-        ],
-        [
-          'stroke_events',
-          `SELECT DISTINCT r.* FROM stroke_events r JOIN ink_outputs o ON o.raw_stroke_id = r.id JOIN shapes s ON s.output_id = o.id WHERE s.id IN (${required})`,
-        ],
-        ['styles', 'SELECT DISTINCT t.* FROM styles t JOIN visible_shapes v ON v.style_id = t.id'],
-        [
-          'ink_policies',
-          `SELECT DISTINCT p.* FROM ink_policies p JOIN ink_outputs o ON o.policy_id = p.id JOIN shapes s ON s.output_id = o.id WHERE s.id IN (${required})`,
-        ],
-        [
-          'ink_outputs',
-          `SELECT DISTINCT o.* FROM ink_outputs o JOIN shapes s ON s.output_id = o.id WHERE s.id IN (${required})`,
-        ],
-        ['shapes', `SELECT * FROM shapes WHERE id IN (${required})`],
-        [
-          'object_contents',
-          `SELECT DISTINCT c.* FROM object_contents c JOIN ${objectView} v ON v.content_id = c.id`,
-        ],
-        ['page_objects', `SELECT o.* FROM page_objects o JOIN ${objectView} v ON v.id = o.id`],
-        [
-          'object_sources',
-          `SELECT s.* FROM object_sources s JOIN ${objectView} v ON v.id = s.object_id${options.drawnOnly ? ' WHERE 0' : ''}`,
-        ],
-        [
-          'detector_policies',
-          `SELECT DISTINCT p.* FROM detector_policies p JOIN ${boxView} b ON b.policy_id = p.id`,
-        ],
-      ];
-      for (const [table, sql] of queries) for (const row of this.db.all(sql)) insertRow(target, table, row);
-      for (const run of this.db.all(
-        `SELECT DISTINCT r.* FROM detection_runs r JOIN ${boxView} b ON b.run_id = r.id`,
-      ))
-        insertRow(target, 'detection_runs', { ...run, input_event_id: null });
-      for (const box of this.db.all(`SELECT b.* FROM detected_boxes b JOIN ${boxView} v ON v.id = b.id`))
-        insertRow(target, 'detected_boxes', box);
-      for (const row of this.db.all(`SELECT s.* FROM box_shapes s JOIN ${boxView} b ON b.id = s.box_id`))
-        insertRow(target, 'box_shapes', row);
-      const journal = new Journal(target);
-      const baseline = journal.event('history.baseline');
-      for (const shape of this.visible()) journal.effect(baseline, shape, true);
-      for (const { id, ...row } of documents)
-        insertRow(target, 'app_event_documents', { app_event_id: baseline, document_id: id, ...row });
-      for (const { id, ...row } of this.db.all(pageQuery))
-        insertRow(target, 'app_event_pages', { app_event_id: baseline, page_id: id, ...row });
-      const objects = this.objects.visible().filter((o) => !options.drawnOnly || o.rendered);
-      const boxes = options.drawnOnly ? [] : this.detections.visible();
-      for (const object of objects) journal.objects.effect(baseline, journal.objects.state(object));
-      for (const box of boxes)
-        insertRow(target, 'app_event_boxes', { app_event_id: baseline, box_id: box.id, active: 1 });
-      if (
-        JSON.stringify(this.visible()) !== JSON.stringify(journal.visible()) ||
-        JSON.stringify(objects) !== JSON.stringify(journal.objects.visible()) ||
-        JSON.stringify(boxes) !== JSON.stringify(journal.detections.visible())
-      ) {
-        throw new Error('Snapshot validation failed: rendered state or linked objects changed');
-      }
-    });
+  snapshotInto(target: SqlDatabase, options: SnapshotOptions = {}): void {
+    snapshotNotebook(this.db, target, options);
   }
 }

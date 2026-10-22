@@ -9,7 +9,7 @@ export function mountShell() {
   element('app').innerHTML = `
   <header class="app-bar">
     <span class="mark" aria-label="Event Draw">e.</span>
-    <select id="document" aria-label="Document"></select>
+    <input id="document-title" aria-label="Document title" placeholder="Blank notes" autocomplete="off" maxlength="200">
     <nav id="page-navigation" aria-label="Page navigation"></nav>
     <span id="save-state" role="status">Opening…</span>
     <button id="return-notebook" hidden>Notebook</button>
@@ -26,6 +26,7 @@ export function mountShell() {
           <p id="notebook-name">Local notebook</p><p>Saved locally as you work. Save SQLite to keep a portable notebook. Opening or creating a notebook first keeps a recovery copy.</p>
         </section>
         <section aria-label="Documents"><h2>Document</h2>
+          <label id="document-choice">Choose document <select id="document" aria-label="Document"></select></label>
           <label>Name <input id="document-name" aria-label="Document name" placeholder="Blank notes"></label>
           <button id="rename-document">Rename</button><button id="new-document">New blank document</button>
           <label class="file-button">Open PDF <input id="pdf-file" type="file" accept="application/pdf,.pdf"></label>
@@ -48,6 +49,9 @@ export function mountShell() {
             <button id="export-full">Save notebook · full history</button><button id="export-visible">Visible state + provenance</button><button id="export-drawn">Just what’s drawn</button>
             <label><input id="include-blobs" type="checkbox" checked> Embed source files</label>
             <button id="export-pdf">Annotated PDF · current document</button>
+            <button id="export-jsonl">Raw event stream · JSONL</button>
+            <label class="file-button">Reconstruct from JSONL <input id="jsonl-file" type="file" accept=".jsonl,.ndjson,application/x-ndjson"></label>
+            <p id="replay-report" role="status"></p>
             <p>SQLite includes all documents. Drawn state excludes linked notes and diagnostic detections. PDF export flattens backgrounds, ink and page objects.</p>
           </div></details>
           <p id="storage" role="status">Opening notebook…</p>
@@ -60,6 +64,7 @@ export function mountShell() {
       </div>
     </details>
   </header>
+  <div id="frontend-extensions" hidden></div>
   <div id="notice" role="status" hidden></div>
   <div id="recovery-actions" hidden><button id="export-existing">Export existing SQLite</button><button id="reset-local">Reset local notebook</button></div>
   <button id="recover" hidden>Export unsaved input (JSON)</button>
@@ -73,8 +78,10 @@ export function mountShell() {
         <button id="undo" disabled>Undo</button>
         <button id="redo" disabled>Redo</button><button id="browse-pages">Pages / Search</button>
         <button id="toggle-text" aria-expanded="false" aria-controls="text-panel">Text</button>
+        <button id="insert-page-text" title="Insert text on this page">Insert text</button>
+        <div id="paint-toolbar" class="paint-toolbar"><div id="color-palette" class="color-palette"></div>
+          <label id="color-control" title="Custom ink color"><input id="color" type="color" value="#203b42" aria-label="Ink color"></label></div>
         <details id="ink-settings"><summary>Ink & actions</summary><div class="ink-settings-panel">
-          <label id="color-control">Ink <input id="color" type="color" value="#203b42" aria-label="Ink color"></label>
           <label id="width-control">Width <input id="width" type="range" min="1" max="32" value="3" aria-label="Pen width"></label>
           <div id="ink-policies"></div>
           <label>Lasso <select id="lasso-policy" aria-label="Lasso policy"></select></label>

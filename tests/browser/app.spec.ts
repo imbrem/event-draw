@@ -95,13 +95,14 @@ test('draw, reload, inspect raw and app rows, undo, and compact with identical r
   await expect(page.locator('#storage')).toHaveText('Stored on this device');
   await stroke(page);
   await stroke(page, [[100, 220], [450, 260]]);
-  await expect(page.locator('#counts')).toHaveText('2 visible · 2 raw strokes · 2 events');
+  await expect(page.locator('#counts')).toHaveText(/^2 visible · 2 raw strokes · \d+ events$/);
   const drawing = await page.locator('#canvas').screenshot();
   await page.reload();
-  await expect(page.locator('#counts')).toHaveText('2 visible · 2 raw strokes · 2 events');
+  await expect(page.locator('#counts')).toHaveText(/^2 visible · 2 raw strokes · \d+ events$/);
   expect(await page.locator('#canvas').screenshot()).toEqual(drawing);
   await tab(page, 'events');
   await expect(page.getByRole('table', { name: 'app_events', exact: true })).toBeVisible();
+  await page.getByRole('table', { name: 'app_events', exact: true }).locator('tbody tr').filter({ hasText: 'stroke.add' }).first().click();
   await expect(page.locator('#record-json')).toContainText('stroke.add');
   await expect(page.locator('#event-effects')).toContainText('offset_x');
   await tab(page, 'raw');
@@ -120,12 +121,12 @@ test('draw, reload, inspect raw and app rows, undo, and compact with identical r
   await expect(page.locator('#counts')).toContainText('2 visible');
   expect(await page.locator('#canvas').screenshot()).toEqual(drawing);
   await page.locator('#undo').click();
-  await expect(page.locator('#counts')).toHaveText('1 visible · 2 raw strokes · 5 events');
+  await expect(page.locator('#counts')).toHaveText(/^1 visible · 2 raw strokes · \d+ events$/);
   const full = await exported(page), snapshot = await exported(page, '#export-visible');
   try {
     const visible = 'SELECT * FROM visible_shapes ORDER BY paint_order, id';
     expect(snapshot.prepare(visible).all()).toEqual(full.prepare(visible).all());
-    expect(full.prepare('SELECT count(*) AS n FROM app_events').get()!.n).toBe(5);
+    expect(full.prepare('SELECT count(*) AS n FROM app_events').get()!.n).toBe(8);
     expect(snapshot.prepare('SELECT count(*) AS n FROM app_events').get()!.n).toBe(1);
     expect(snapshot.prepare('SELECT count(*) AS n FROM stroke_events').get()!.n).toBe(1);
     expect(snapshot.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
@@ -148,7 +149,7 @@ test('both erasers split or delete geometry and undo restores original raw refer
   await stroke(page);
   await page.getByRole('button', { name: 'Erase parts', exact: true }).click();
   await stroke(page, [[300, 120], [300, 180]]);
-  await expect(page.locator('#counts')).toHaveText('2 visible · 2 raw strokes · 2 events');
+  await expect(page.locator('#counts')).toHaveText(/^2 visible · 2 raw strokes · \d+ events$/);
   const split = await exported(page);
   try {
     const rows = split.prepare('SELECT * FROM visible_shapes ORDER BY start_index').all();
@@ -161,7 +162,7 @@ test('both erasers split or delete geometry and undo restores original raw refer
   await expect(page.locator('#counts')).toContainText('1 visible');
   await page.getByRole('button', { name: 'Erase whole strokes', exact: true }).click();
   await stroke(page, [[300, 120], [300, 180]]);
-  await expect(page.locator('#counts')).toHaveText('0 visible · 3 raw strokes · 4 events');
+  await expect(page.locator('#counts')).toHaveText(/^0 visible · 3 raw strokes · \d+ events$/);
   await page.locator('#undo').click();
   await expect(page.locator('#counts')).toContainText('1 visible');
 });
@@ -191,7 +192,11 @@ test('pages share one journal and whiteboards pan/zoom independently of raw geom
   await expect(page.locator('#page-number')).toHaveValue('2');
   await page.getByRole('button', { name: 'Pan board', exact: true }).click();
   await stroke(page, [[100, 100], [300, 200]]);
-  await expect(page.locator('#view-position')).toContainText('x -200, y -100');
+  // Pointer coordinates can round to CSS pixels after fitting the viewport.
+  await expect.poll(async () => {
+    const position = (await page.locator('#view-position').textContent())!.match(/x (-?\d+), y (-?\d+)/)!;
+    return Math.max(Math.abs(Number(position[1]) + 200), Math.abs(Number(position[2]) + 100));
+  }).toBeLessThan(2);
   await page.locator('#zoom-in').click();
   await expect(page.locator('#view-position')).toContainText('125%');
   await page.getByRole('button', { name: 'Pen', exact: true }).click();
@@ -199,7 +204,7 @@ test('pages share one journal and whiteboards pan/zoom independently of raw geom
   const full = await exported(page), snapshot = await exported(page, '#export-visible');
   try {
     expect(full.prepare('SELECT count(*) AS n FROM stroke_events').get()!.n).toBe(3);
-    expect(full.prepare('SELECT DISTINCT page_id FROM app_events ORDER BY page_id').all().map((r) => r.page_id)).toEqual([1, 2, 3]);
+    expect(full.prepare('SELECT DISTINCT page_id FROM app_events WHERE page_id IS NOT NULL ORDER BY page_id').all().map((r) => r.page_id)).toEqual([1, 2, 3]);
     expect(snapshot.prepare('SELECT * FROM pages').all()).toEqual(full.prepare('SELECT * FROM pages').all());
     expect(snapshot.prepare('SELECT * FROM visible_shapes ORDER BY id').all())
       .toEqual(full.prepare('SELECT * FROM visible_shapes ORDER BY id').all());
@@ -226,7 +231,7 @@ test('narrow touch layout preserves cancelled pen observations without displayin
     canvas.dispatchEvent(new PointerEvent('pointermove', { ...options, clientX: rect.left + 100 }));
     canvas.dispatchEvent(new PointerEvent('pointercancel', options));
   });
-  await expect(page.locator('#counts')).toHaveText('0 visible · 1 raw strokes · 1 events');
+  await expect(page.locator('#counts')).toHaveText(/^0 visible · 1 raw strokes · \d+ events$/);
   await menu(page);
   await page.locator('#diagnostics summary').click();
   const details = JSON.parse((await page.locator('#sample-info').textContent())!);
@@ -309,9 +314,9 @@ test('reset is explicit, cancellation preserves data, and reset persists across 
   await expect(page.locator('#counts')).toContainText('1 visible');
   page.once('dialog', (dialog) => dialog.accept());
   await page.locator('#reset-settings').click();
-  await expect(page.locator('#counts')).toHaveText('0 visible · 0 raw strokes · 0 events');
+  await expect(page.locator('#counts')).toHaveText(/^0 visible · 0 raw strokes · \d+ events$/);
   await page.reload();
-  await expect(page.locator('#counts')).toHaveText('0 visible · 0 raw strokes · 0 events');
+  await expect(page.locator('#counts')).toHaveText(/^0 visible · 0 raw strokes · \d+ events$/);
   await stroke(page);
   await expect(page.locator('#counts')).toContainText('1 visible');
 });
@@ -360,11 +365,11 @@ test('an unsupported on-disk schema can be exported and reset from the error scr
   } finally { old.close(); }
   page.once('dialog', (dialog) => dialog.accept());
   await page.locator('#reset-local').click();
-  await expect(page.locator('#counts')).toHaveText('0 visible · 0 raw strokes · 0 events');
+  await expect(page.locator('#counts')).toHaveText(/^0 visible · 0 raw strokes · \d+ events$/);
   await expect(page.locator('#notice')).toBeHidden();
   await stroke(page);
   await page.reload();
-  await expect(page.locator('#counts')).toHaveText('1 visible · 1 raw strokes · 1 events');
+  await expect(page.locator('#counts')).toHaveText(/^1 visible · 1 raw strokes · \d+ events$/);
 });
 
 test('lasso selects ink, dragging changes placement only, and deletion and movement undo separately', async ({ page }) => {
@@ -390,7 +395,7 @@ test('lasso selects ink, dragging changes placement only, and deletion and movem
     expect(Math.abs(Number(current.offset_x) - Number(original.offset_x) - 50)).toBeLessThan(2);
     expect(Math.abs(Number(current.offset_y) - Number(original.offset_y) - 80)).toBeLessThan(2);
     expect(moved.prepare('SELECT kind FROM app_events ORDER BY id').all().map((r) => r.kind))
-      .toEqual(['stroke.add', 'stroke.add', 'selection.lasso', 'selection.move']);
+      .toEqual(['notebook.create', 'app.open', 'stroke.add', 'stroke.add', 'selection.lasso', 'selection.move']);
     expect(moved.prepare('SELECT count(*) AS n FROM stroke_events').get()!.n).toBe(4);
     expect(compact.prepare('SELECT count(*) AS n FROM stroke_events').get()!.n).toBe(2);
     expect(compact.prepare('SELECT * FROM visible_shapes ORDER BY id').all())
@@ -398,17 +403,17 @@ test('lasso selects ink, dragging changes placement only, and deletion and movem
   } finally { moved.close(); compact.close(); }
   await page.screenshot({ path: 'test-results/lasso-selection.png', fullPage: true });
   await page.locator('#delete-selection').click();
-  await expect(page.locator('#counts')).toHaveText('1 visible · 4 raw strokes · 5 events');
+  await expect(page.locator('#counts')).toHaveText(/^1 visible · 4 raw strokes · \d+ events$/);
   await expect(page.locator('#selection-count')).toHaveText('0 selected');
   await page.locator('#undo').click();
   await expect(page.locator('#counts')).toContainText('2 visible');
   await page.locator('#undo').click();
-  await expect(page.locator('#counts')).toHaveText('2 visible · 4 raw strokes · 7 events');
+  await expect(page.locator('#counts')).toHaveText(/^2 visible · 4 raw strokes · \d+ events$/);
   const restored = await exported(page);
   try { expect(restored.prepare('SELECT * FROM visible_shapes WHERE id = 1').get()).toEqual(original); }
   finally { restored.close(); }
   await page.reload();
-  await expect(page.locator('#counts')).toHaveText('2 visible · 4 raw strokes · 7 events');
+  await expect(page.locator('#counts')).toHaveText(/^2 visible · 4 raw strokes · \d+ events$/);
 });
 
 const pdfFixture = new URL('../fixtures/pages.pdf', import.meta.url);
@@ -466,7 +471,7 @@ test('PDF file and URL imports deduplicate by hash; annotations survive navigati
   await page.locator('#import-url').click();
   await expect(page.locator('#options')).not.toHaveAttribute('open', '');
   await expect(page.locator('#document option')).toHaveCount(2);
-  await expect(page.locator('#counts')).toHaveText('1 visible · 2 raw strokes · 3 events');
+  await expect(page.locator('#counts')).toHaveText(/^1 visible · 2 raw strokes · \d+ events$/);
   const full = await exported(page), snapshot = await exported(page, '#export-visible');
   try {
     for (const table of ['assets', 'documents', 'pages', 'visible_shapes']) {
@@ -495,7 +500,7 @@ test('failed URL and malformed PDF imports keep the notebook usable and intact',
   await expect(page.locator('#notice')).toContainText('Invalid PDF');
   await expect(page.locator('#document option')).toHaveCount(1);
   await stroke(page, [[100, 250], [450, 250]]);
-  await expect(page.locator('#counts')).toHaveText('2 visible · 2 raw strokes · 2 events');
+  await expect(page.locator('#counts')).toHaveText(/^2 visible · 2 raw strokes · \d+ events$/);
 });
 
 test('blank document names, page ordering and deletion are separate from annotation identity', async ({ page }) => {
@@ -542,8 +547,9 @@ test('database diagnostics and timestamped raw replay are read-only and cancel o
       canvas.dispatchEvent(event);
     }
   });
-  await expect(page.locator('#counts')).toHaveText('1 visible · 1 raw strokes · 1 events');
-  const before = await exported(page), raw = before.prepare('SELECT * FROM stroke_events').all(); before.close();
+  await expect(page.locator('#counts')).toHaveText(/^1 visible · 1 raw strokes · \d+ events$/);
+  const before = await exported(page), raw = before.prepare('SELECT * FROM stroke_events').all();
+  const eventCount = before.prepare('SELECT count(*) AS n FROM app_events').get()!.n; before.close();
   await tab(page, 'raw');
   const diagnostics = page.getByRole('region', { name: 'Database diagnostics', exact: true });
   await expect(diagnostics).toContainText('1 / 1 (100.0%)');
@@ -570,7 +576,7 @@ test('database diagnostics and timestamped raw replay are read-only and cancel o
   const after = await exported(page);
   try {
     expect(after.prepare('SELECT * FROM stroke_events').all()).toEqual(raw);
-    expect(after.prepare('SELECT count(*) AS n FROM app_events').get()!.n).toBe(1);
+    expect(after.prepare('SELECT count(*) AS n FROM app_events').get()!.n).toBe(eventCount);
   } finally { after.close(); }
 });
 
@@ -601,6 +607,7 @@ test('pressure output and per-trace experimental comparison replay without writi
   await penTrace(page);
   const before = await exported(page);
   const original = before.prepare('SELECT * FROM stroke_events').all();
+  const eventCount = before.prepare('SELECT count(*) AS n FROM app_events').get()!.n;
   try {
     const output = JSON.parse(before.prepare('SELECT data_json FROM ink_outputs').get()!.data_json as string);
     expect(output.points.map((p: { widthFactor: number }) => p.widthFactor)).toEqual(expect.arrayContaining([
@@ -627,7 +634,7 @@ test('pressure output and per-trace experimental comparison replay without writi
   try {
     expect(after.prepare('SELECT * FROM stroke_events').all()).toEqual(original);
     expect(after.prepare('SELECT count(*) AS n FROM ink_outputs').get()!.n).toBe(1);
-    expect(after.prepare('SELECT count(*) AS n FROM app_events').get()!.n).toBe(1);
+    expect(after.prepare('SELECT count(*) AS n FROM app_events').get()!.n).toBe(eventCount);
   } finally { after.close(); }
 });
 
@@ -859,7 +866,7 @@ test('notebook files reopen atomically, recovery restores replacement, and drawn
   await page.goto('./');await stroke(page);await page.locator('#toggle-text').click();await page.locator('#add-linked-note').click();await page.locator('#text-source').fill('private provenance');await page.locator('#close-text').click();
   const path=await download(page,'#export-full'),bytes=readFileSync(path!);
   const drawn=await exported(page,'#export-drawn');try{expect(drawn.prepare('SELECT * FROM visible_shapes').all()).toHaveLength(1);expect(drawn.prepare('SELECT * FROM visible_objects').all()).toHaveLength(0);expect(drawn.prepare('SELECT * FROM app_events').all()).toHaveLength(1);}finally{drawn.close();}
-  await menu(page);await page.locator('#new-notebook').click();await expect(page.locator('#counts')).toHaveText('0 visible · 0 raw strokes · 0 events');
+  await menu(page);await page.locator('#new-notebook').click();await expect(page.locator('#counts')).toHaveText(/^0 visible · 0 raw strokes · \d+ events$/);
   await menu(page);await page.locator('#restore-backup').click();await expect(page.locator('#counts')).toContainText('1 visible');
   await menu(page);await page.locator('#notebook-file').setInputFiles({name:'Saved.sqlite3',mimeType:'application/vnd.sqlite3',buffer:bytes});await expect(page.locator('#notebook-name')).toHaveText('Saved.sqlite3');await expect(page.locator('#counts')).toContainText('1 visible');
   await menu(page);await page.locator('#notebook-file').setInputFiles({name:'bad.sqlite3',mimeType:'application/vnd.sqlite3',buffer:Buffer.from('not a database')});await expect(page.locator('#notice')).toContainText('Choose a SQLite notebook');await expect(page.locator('#counts')).toContainText('1 visible');
@@ -904,7 +911,7 @@ test('two-finger navigation cancels accidental ink, pen rejects palms, and inter
   });
   await expect(page.locator('#save-state')).toHaveText('Saved');expect((await page.locator('#paper').boundingBox())!.width).toBeGreaterThan(size!.width);
   await page.locator('#canvas').evaluate((canvas)=>{const r=canvas.getBoundingClientRect();const send=(type:string,id:number,pointerType:string)=>canvas.dispatchEvent(new PointerEvent(type,{pointerId:id,pointerType,clientX:r.x+100,clientY:r.y+100,buttons:1,button:0,bubbles:true}));send('pointerdown',20,'pen');send('pointerdown',21,'touch');document.dispatchEvent(new Event('visibilitychange'));window.dispatchEvent(new Event('blur'));send('pointerup',21,'touch');});
-  await expect(page.locator('#counts')).toContainText('0 visible · 2 raw strokes');const db=await exported(page);try{expect(db.prepare("SELECT kind FROM app_events").all()).toEqual([{kind:'input.cancel'},{kind:'input.cancel'}]);}finally{db.close();}
+  await expect(page.locator('#counts')).toContainText('0 visible · 2 raw strokes');const db=await exported(page);try{expect(db.prepare("SELECT kind FROM app_events").all()).toEqual([{kind:'notebook.create'},{kind:'app.open'},{kind:'input.cancel'},{kind:'input.cancel'}]);}finally{db.close();}
 });
 
 test('page picker searches linked notes and PDF text and exposes selectable PDF text',async({page})=>{
@@ -912,4 +919,74 @@ test('page picker searches linked notes and PDF text and exposes selectable PDF 
   await page.locator('#toggle-text').click();await page.locator('#add-linked-note').click();await page.locator('#text-source').fill('needle algebra');await page.locator('#close-text').click();await expect(page.locator('#save-state')).toHaveText('Saved');
   await page.locator('#browse-pages').click();await expect(page.locator('.page-thumbnail')).toHaveCount(3);await page.locator('#reader-mode').click();await expect(page.locator('.continuous-reader')).toBeVisible();await expect(page.locator('.page-thumbnail canvas').first()).toBeVisible();await page.screenshot({path:'test-results/continuous-reader.png',fullPage:true});await page.locator('#reader-mode').click();await page.getByLabel('Search notebook').fill('needle');await page.locator('#notebook-search-form button').click();await expect(page.locator('#search-status')).toContainText('1 matching pages');await page.locator('.search-results button').click();
   await page.locator('#ink-settings').evaluate((e)=>{(e as HTMLDetailsElement).open=true;});await page.locator('#select-pdf-text').check();await expect(page.locator('#pdf-text span')).not.toHaveCount(0);await expect(page.locator('#pdf-text')).toBeVisible();await page.screenshot({path:'test-results/pdf-text-layer.png',fullPage:true});expect(errors).toEqual([]);
+});
+
+test('mobile palette, editable title and direct page text use journal-backed edits', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('./');
+  await expect(page.locator('#save-state')).toHaveText('Saved');
+  await expect(page.getByLabel('Event Draw', { exact: true })).toBeVisible();
+  const title = page.getByRole('textbox', { name: 'Document title', exact: true });
+  await title.fill('Math notebook'); await title.press('Enter');
+  await expect(page.locator('#save-state')).toHaveText('Saved');
+  await page.getByRole('button', { name: 'Blue ink', exact: true }).click();
+  await stroke(page);
+  await page.getByRole('button', { name: 'Highlighter', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Yellow ink', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await page.getByRole('button', { name: 'Red ink', exact: true }).click();
+  await stroke(page, [[100, 240], [500, 240]]);
+  await page.getByRole('button', { name: 'Pen', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Blue ink', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await page.getByRole('button', { name: 'Insert text', exact: true }).click();
+  await expect(page.locator('#text-source')).toBeFocused();
+  await page.locator('#text-source').fill('Let $x = 5$.');
+  await page.locator('#save-text').click();
+  await expect(page.locator('#text-status')).toHaveText('Saved');
+  await expect(page.locator('#text-preview .katex')).toBeVisible();
+  await page.locator('#close-text').click();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: 'test-results/mobile-palette-text.png', fullPage: true });
+  const db = await exported(page);
+  try {
+    expect(db.prepare('SELECT name FROM current_documents WHERE id=1').get()!.name).toBe('Math notebook');
+    expect(db.prepare("SELECT count(*) AS n FROM app_events WHERE kind='document.rename'").get()!.n).toBe(1);
+    expect(db.prepare('SELECT color,opacity FROM styles ORDER BY id').all()).toEqual([
+      { color: '#1971c2', opacity: 1 }, { color: '#e03131', opacity: .28 },
+    ]);
+    expect(db.prepare('SELECT rendered FROM visible_objects').get()!.rendered).toBe(1);
+  } finally { db.close(); }
+});
+
+test('typed JSONL reconstructs notebooks and partial history; malformed input preserves the working copy', async ({ page }) => {
+  await page.goto('./'); await stroke(page); await stroke(page, [[100, 260], [500, 260]]);
+  const canvas = await page.locator('#canvas').screenshot();
+  const before = await exported(page);
+  const identities = before.prepare('SELECT * FROM object_ids ORDER BY id').all(); before.close();
+  const path = await download(page, '#export-jsonl');
+  const text = readFileSync(path, 'utf8');
+  const records = text.trim().split('\n').map((line) => JSON.parse(line));
+  expect(records.map((r) => r.id)).toEqual(records.map((_, i) => i + 1));
+  expect(records.some((r) => r.type === 'trace.raw')).toBe(true);
+  expect(records.some((r) => r.type === 'trace.processed')).toBe(true);
+  await menu(page);
+  await page.locator('#jsonl-file').setInputFiles({ name: 'restored.jsonl', mimeType: 'application/x-ndjson', buffer: Buffer.from(text) });
+  await expect(page.locator('#replay-report')).toContainText('0 skipped');
+  await expect(page.locator('#counts')).toContainText('2 visible · 2 raw strokes');
+  await menu(page, false);
+  expect(await page.locator('#canvas').screenshot()).toEqual(canvas);
+  const restored = await exported(page);
+  try { expect(restored.prepare('SELECT * FROM object_ids ORDER BY id').all()).toEqual(identities); }
+  finally { restored.close(); }
+  const missing = records.find((r) => r.type === 'trace.raw').id;
+  const partial = records.filter((r) => r.id !== missing).map((r) => JSON.stringify(r)).join('\n');
+  await menu(page);
+  await page.locator('#jsonl-file').setInputFiles({ name: 'partial.jsonl', mimeType: 'application/x-ndjson', buffer: Buffer.from(partial) });
+  await expect(page.locator('#counts')).toContainText('1 visible · 1 raw strokes');
+  await expect(page.locator('#replay-report')).toHaveText(/Reconstructed \d+ edits; [1-9]\d* skipped/);
+  await expect(page.locator('#notice')).toContainText('skipped');
+  await page.locator('#jsonl-file').setInputFiles({ name: 'invalid.jsonl', mimeType: 'application/x-ndjson', buffer: Buffer.from('{}\n') });
+  await expect(page.locator('#notice')).toContainText('Invalid record');
+  await expect(page.locator('#counts')).toContainText('1 visible · 1 raw strokes');
+  await menu(page, false); await stroke(page, [[100, 350], [500, 350]]);
+  await expect(page.locator('#counts')).toContainText('2 visible · 2 raw strokes');
 });

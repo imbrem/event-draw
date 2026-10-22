@@ -43,6 +43,9 @@ export function insertRow(db: SqlDatabase, table: string, row: Row): void {
   );
 }
 export const VIEWER_TABLES = [
+  'notebook_metadata',
+  'notebook_imports',
+  'object_ids',
   'app_events',
   'app_event_shapes',
   'shapes',

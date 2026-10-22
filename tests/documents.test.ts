@@ -66,7 +66,6 @@ test('snapshot retains byte-identical PDF assets, names, page topology and visib
     source.journal.clear(2); source.journal.undo(2);
     source.journal.addPage(1, 1, 300, 400);
     source.journal.changePage(1, 'delete');
-    target.db.exec('DELETE FROM capture_sessions');
     source.journal.snapshotInto(target.db);
     for (const table of ['assets', 'documents', 'pages', 'visible_shapes']) {
       assert.deepEqual(target.db.all('SELECT * FROM ' + table), source.db.all('SELECT * FROM ' + table));

@@ -22,7 +22,8 @@
     "test": "node --disable-warning=ExperimentalWarning --test tests/*.test.ts",
     "test:browser": "playwright test",
     "compact": "node --disable-warning=ExperimentalWarning scripts/compact.ts",
-    "detect": "node --disable-warning=ExperimentalWarning scripts/detect.ts"
+    "detect": "node --disable-warning=ExperimentalWarning scripts/detect.ts",
+    "events": "node --disable-warning=ExperimentalWarning scripts/events.ts"
   },
   "dependencies": {
     "@sqlite.org/sqlite-wasm": "3.54.1-build1",
