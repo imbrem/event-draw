@@ -81,6 +81,64 @@ disabled during contact and while an edit is being saved.
   App events show their referenced shape states.
 - **Raw strokes** displays capture records and a neutral geometry preview.
   It does not apply the shape's color, painted width, tool or placement.
+  **Replay stroke** animates the measured samples at their recorded timing,
+  with 0.25×, 1× or 4× speed and Stop. Missing sample clocks fall back to receipt
+  clocks; regressions clamp forward and zero-duration captures appear instantly.
+  Predictions stay excluded. Replay is display-frame limited and does not write
+  to the database. It stops when changing rows, refreshing or leaving the viewer.
+
+Both database viewers include **Database diagnostics**, covering all documents:
+ink captures with any visible geometry, all raw captures used by visible ink,
+visible/total shapes, event/effect counts, document/page counts and JSON/PDF
+payload sizes. Visibility means *any fragment remains*, not a fraction of path
+length. Eraser/lasso/move/cancelled inputs contribute to the raw denominator,
+while ink captures are raw IDs referenced by shapes. Compaction changes the
+historical denominators. Empty denominators show n/a. **Refresh database**
+updates the aggregates and rows on demand; the raw table itself is unchanged.
+
+## Testing on a tablet
+
+No macOS update, Xcode or developer membership is needed for the browser app.
+Desktop Chrome and WebKit tests cover the database, geometry, imports, rendering
+and UI, but cannot establish real pencil sampling, latency, palm rejection,
+tablet memory limits, Safari storage eviction or background/resume behavior.
+An unofficial pencil may report a finger or fixed/default pressure. The raw
+viewer and capture-session capability metadata help distinguish observations
+from actual hardware support; an exposed field is not proof of a measurement.
+
+For a quick drawing-only check, open `http://<Mac-LAN-IP>:5173` on the same Wi-Fi
+while `pnpm dev` runs. macOS may request firewall access. LAN HTTP may require
+session-only storage; export before closing. For a meaningful persistence test,
+use a trusted HTTPS URL. One convenient temporary option is Cloudflare's quick
+tunnel to a **static build**, with no Apple tooling:
+
+```sh
+brew install cloudflared             # once, if needed
+pnpm build
+python3 -m http.server 8080 --bind 127.0.0.1 --directory dist
+```
+
+In another terminal:
+
+```sh
+cloudflared tunnel --url http://127.0.0.1:8080
+```
+
+Open the printed `https://…trycloudflare.com` URL in Safari on the iPad/iPhone.
+This exposes the built app to anyone with the URL until the tunnel is stopped;
+notes/PDFs remain in that device's browser storage, without a sync server.
+Quick-tunnel URLs change between runs, and each new origin gets separate browser
+storage, so export before stopping. Use a stable HTTPS origin for continued work.
+This repo does not automatically install or start an external tunnel.
+
+Try fast/slow curves, taps, pressure/tilt changes and a palm resting on the page;
+inspect the raw JSON and replay. Turn off Finger drawing and check whether your
+pencil still works. Test both erasers, lasso/move/undo, portrait/landscape rotation,
+a small multipage PDF, reload, background/resume and both SQLite exports. Check
+that storage says **Stored on this device**, then reopen the *same* HTTPS URL.
+The same workflow applies after a macOS update. Xcode is needed later for a native
+wrapper/capture bridge; Safari's Develop menu can already inspect a USB-connected
+iPad when Web Inspector is enabled on the device.
 
 ## PDFs, document names and content storage
 
@@ -277,6 +335,8 @@ redo, synchronization and CAS integration remain future work.
 | `ui/canvas.ts` | Pointer lifecycle, pointer capture and frame scheduling |
 | `ui/drawing.ts`, `render.ts` | Shared Canvas primitives and notebook scene rendering |
 | `ui/viewer.ts` | Read-only browsing and neutral raw previews |
+| `storage/diagnostics.ts`, `ui/database-diagnostics.ts` | On-demand database aggregates and their labelled display |
+| `replay.ts`, `ui/stroke-preview.ts` | Measured-sample timeline, neutral replay and cancellation |
 | `app.ts` | State coordination, edit queue and control wiring |
 
 Shared storage/codecs and

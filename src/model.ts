@@ -75,9 +75,12 @@ export const EMPTY_STATE: State = {
 export type Range = [number, number];
 
 /** Keep summary/rawupdate streams in storage, but avoid drawing both streams. */
-export function measuredSamples(data: InkData): Sample[] {
+export function measuredDeliveries(data: InkData): Delivery[] {
   const raw = data.deliveries.some((d) => d.type === 'pointerrawupdate');
-  return data.deliveries.filter((d) => !raw || d.type !== 'pointermove')
+  return data.deliveries.filter((d) => !raw || d.type !== 'pointermove');
+}
+export function measuredSamples(data: InkData): Sample[] {
+  return measuredDeliveries(data)
     .flatMap((d) => d.coalesced.length ? d.coalesced : [d.reported]);
 }
 

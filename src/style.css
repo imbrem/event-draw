@@ -84,6 +84,13 @@ tbody tr:hover, tbody tr.selected { background: #e8eee8; }
 pre { max-width: 100%; overflow: auto; font: 10px/1.5 ui-monospace, monospace; padding: 10px; background: #e9eae4; border-radius: 4px; }
 .record-detail pre { max-height: 500px; font-size: 11px; }
 .raw-preview { display: block; width: 240px; max-width: 100%; aspect-ratio: 1; background: white; border: 1px solid #dedfd7; }
+.database-diagnostics { padding: 12px 16px; background: #e6ece5; border: 1px solid #d9ded7; border-radius: 6px; }
+.database-diagnostics h3 { font-size: 13px; margin: 0 0 12px; }
+.database-diagnostics dl { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 20px; margin: 0; font-size: 12px; max-width: 650px; }
+.database-diagnostics dd { margin: 0; font-variant-numeric: tabular-nums; }
+.database-diagnostics p { font-size: 11px; line-height: 1.6; color: #637c7b; margin-bottom: 0; }
+.replay-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.replay-status { font-size: 12px; font-variant-numeric: tabular-nums; }
 @media (max-width: 720px) {
   .app-bar { padding: 6px 8px; gap: 6px; }
   .mark, #save-state { display: none; }

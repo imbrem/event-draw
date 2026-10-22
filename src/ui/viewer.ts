@@ -1,6 +1,7 @@
 import type { DatabaseClient } from '../database.ts';
-import { measuredSamples, type InkData, type Point } from '../model.ts';
-import { drawPath, prepareCanvas } from './drawing.ts';
+import type { InkData } from '../model.ts';
+import { diagnosticsPanel } from './database-diagnostics.ts';
+import { StrokePreview } from './stroke-preview.ts';
 import { VIEWER_TABLES, type Row, type ViewerTable } from '../storage/sql.ts';
 
 export class DatabaseViewer {
@@ -10,6 +11,7 @@ export class DatabaseViewer {
   private table: ViewerTable = 'app_events';
   private offset = 0;
   private generation = 0;
+  private preview: StrokePreview | undefined;
   constructor(root: HTMLElement, client: DatabaseClient) {
     this.root = root;
     this.client = client;
@@ -20,10 +22,14 @@ export class DatabaseViewer {
     this.offset = 0;
     await this.refresh();
   }
+  hide() { this.generation++; this.preview?.close(); this.preview = undefined; }
   async refresh() {
     const generation = ++this.generation;
+    this.preview?.close(); this.preview = undefined;
     try {
-      const result = await this.client.browse(this.table, this.offset);
+      const [result, diagnostics] = await Promise.all([
+        this.client.browse(this.table, this.offset), this.client.diagnostics(),
+      ]);
       if (generation !== this.generation) return;
       this.root.replaceChildren();
       const heading = document.createElement('h2');
@@ -54,7 +60,9 @@ export class DatabaseViewer {
       const count = document.createElement('span');
       count.textContent = result.total ? (this.offset + 1) + '–' +
         Math.min(this.offset + result.rows.length, result.total) + ' of ' + result.total + ' rows' : 'No rows yet';
-      controls.append(previous, next, count);
+      const refresh = document.createElement('button'); refresh.textContent = 'Refresh database';
+      refresh.onclick = () => { void this.refresh(); };
+      controls.append(previous, next, count, refresh);
       const grid = document.createElement('div');
       grid.className = 'database-grid';
       const wrapper = document.createElement('div');
@@ -87,7 +95,7 @@ export class DatabaseViewer {
       }
       wrapper.append(table);
       grid.append(wrapper, detail);
-      this.root.append(heading, description, controls, grid);
+      this.root.append(heading, description, diagnosticsPanel(diagnostics), controls, grid);
       if (result.rows.length) {
         body.rows[0].classList.add('selected');
         await this.inspect(result.rows[0], detail);
@@ -97,6 +105,7 @@ export class DatabaseViewer {
     }
   }
   private async inspect(row: Row, detail: HTMLElement) {
+    this.preview?.close(); this.preview = undefined;
     detail.replaceChildren();
     const heading = document.createElement('h3');
     heading.textContent = this.table + (row.id === undefined ? '' : ' #' + row.id);
@@ -111,12 +120,7 @@ export class DatabaseViewer {
     pre.textContent = JSON.stringify(decoded, null, 2);
     detail.append(heading);
     if (this.table === 'stroke_events' && row.data_version === 1) {
-      const canvas = document.createElement('canvas');
-      canvas.className = 'raw-preview';
-      canvas.setAttribute('aria-label', 'Neutral raw stroke preview');
-      detail.append(canvas);
-      const points = measuredSamples(JSON.parse(String(row.data_json)) as InkData);
-      requestAnimationFrame(() => this.preview(canvas, points));
+      this.preview = new StrokePreview(detail, JSON.parse(String(row.data_json)) as InkData);
     }
     detail.append(pre);
     if (this.table === 'app_events') {
@@ -128,17 +132,5 @@ export class DatabaseViewer {
       effects.textContent = JSON.stringify(related, null, 2);
       detail.append(label, effects);
     }
-  }
-  private preview(canvas: HTMLCanvasElement, points: Point[]) {
-    if (!canvas.isConnected || !points.length) return;
-    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-    for (const p of points) {
-      minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
-      minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
-    }
-    const size = Math.max(maxX - minX, maxY - minY, 20), pad = size * 0.1;
-    const view = { x: minX - pad, y: minY - pad, width: size + 2 * pad, height: size + 2 * pad };
-    const context = prepareCanvas(canvas, view);
-    if (context) drawPath(context, points, '#203b42', view.width / 150);
   }
 }

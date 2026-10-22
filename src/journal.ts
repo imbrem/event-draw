@@ -4,6 +4,7 @@ import {
 } from './model.ts';
 import { gestureDelta, lassoShapes, planErasure } from './geometry.ts';
 import { DocumentStore } from './storage/documents.ts';
+import { databaseDiagnostics } from './storage/diagnostics.ts';
 import {
   insertRow, scalar, transaction, VIEWER_TABLES,
   type BrowseResult, type Row, type SqlDatabase, type ViewerTable,
@@ -189,6 +190,7 @@ export class Journal {
       undoablePages: [...new Set(this.undoCandidates().map((row) => Number(row.page_id)))],
     };
   }
+  diagnostics() { return databaseDiagnostics(this.db); }
   browse(table: ViewerTable, offset = 0, limit = 25): BrowseResult {
     if (!VIEWER_TABLES.includes(table)) throw new Error('Unknown viewer table');
     if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) {

@@ -93,6 +93,7 @@ scope.onmessage = async ({ data: request }) => {
       case 'browse':
         value = journal.browse(request.payload.table as ViewerTable, request.payload.offset) satisfies BrowseResult; break;
       case 'related': value = journal.related(request.payload); break;
+      case 'diagnostics': value = journal.diagnostics(); break;
       case 'export': {
         if (request.payload === 'visible') {
           const snapshot = new sqlite.oo1.DB(':memory:');

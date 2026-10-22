@@ -1,5 +1,6 @@
 import type { CaptureSession, Gesture, PdfImport, State } from './model.ts';
 import type { BrowseResult, Row, ViewerTable } from './storage/sql.ts';
+import type { DatabaseDiagnostics } from './storage/diagnostics.ts';
 
 export type Initialized = {
   mode: 'persistent' | 'temporary'; state: State; sessionId: number; storageError: string | null;
@@ -53,5 +54,6 @@ export class DatabaseClient {
   deleteShapes(pageId: number, shapeIds: number[]) { return this.call<State>('deleteShapes', { pageId, shapeIds }); }
   browse(table: ViewerTable, offset = 0) { return this.call<BrowseResult>('browse', { table, offset }); }
   related(eventId: number) { return this.call<Row[]>('related', eventId); }
+  diagnostics() { return this.call<DatabaseDiagnostics>('diagnostics'); }
   export(mode: 'full' | 'visible') { return this.call<Uint8Array<ArrayBuffer>>('export', mode); }
 }

@@ -527,3 +527,49 @@ test('blank document names, page ordering and deletion are separate from annotat
     expect(full.prepare('SELECT count(*) AS n FROM stroke_events').get()!.n).toBe(1);
   } finally { full.close(); }
 });
+
+test('database diagnostics and timestamped raw replay are read-only and cancel on navigation', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.locator('#save-state')).toHaveText('Saved');
+  await page.locator('#canvas').evaluate((canvas) => {
+    canvas.setPointerCapture = () => {};
+    const rect = canvas.getBoundingClientRect();
+    for (const [i, type] of ['pointerdown', 'pointermove', 'pointerup'].entries()) {
+      const event = new PointerEvent(type, { pointerId: 7, pointerType: 'pen', isPrimary: true, bubbles: true,
+        clientX: rect.left + 50 + i * 70, clientY: rect.top + 80 + i * 30, button: 0,
+        buttons: type === 'pointerup' ? 0 : 1, pressure: 0.6 });
+      Object.defineProperty(event, 'timeStamp', { value: 1000 + i * 1000 });
+      canvas.dispatchEvent(event);
+    }
+  });
+  await expect(page.locator('#counts')).toHaveText('1 visible · 1 raw strokes · 1 events');
+  const before = await exported(page), raw = before.prepare('SELECT * FROM stroke_events').all(); before.close();
+  await tab(page, 'raw');
+  const diagnostics = page.getByRole('region', { name: 'Database diagnostics', exact: true });
+  await expect(diagnostics).toContainText('1 / 1 (100.0%)');
+  await expect(diagnostics).toContainText('all documents');
+  const canvas = page.getByLabel('Neutral raw stroke preview');
+  await expect(canvas).toHaveAttribute('data-replayed-samples', '3');
+  const full = await canvas.screenshot();
+  await page.getByLabel('Replay speed').selectOption('4');
+  await page.getByRole('button', { name: 'Replay stroke', exact: true }).click();
+  await expect(page.locator('.replay-status')).toContainText('Replaying');
+  await expect.poll(() => canvas.getAttribute('data-replayed-samples')).toBe('1');
+  await expect(page.locator('.replay-status')).toHaveText('Replay complete');
+  expect(await canvas.screenshot()).toEqual(full);
+  await page.getByLabel('Replay speed').selectOption('0.25');
+  await page.getByRole('button', { name: 'Replay stroke', exact: true }).click();
+  await page.getByRole('button', { name: 'Stop replay', exact: true }).click();
+  await expect(page.locator('.replay-status')).toHaveText('Full capture');
+  await page.getByRole('button', { name: 'Replay stroke', exact: true }).click();
+  await page.getByRole('button', { name: 'Refresh database', exact: true }).click();
+  await expect(page.locator('.replay-status')).toHaveText('Full capture');
+  await page.screenshot({ path: 'test-results/raw-replay-diagnostics.png', fullPage: true });
+  await page.getByRole('button', { name: 'Replay stroke', exact: true }).click();
+  await page.locator('#return-notebook').click();
+  const after = await exported(page);
+  try {
+    expect(after.prepare('SELECT * FROM stroke_events').all()).toEqual(raw);
+    expect(after.prepare('SELECT count(*) AS n FROM app_events').get()!.n).toBe(1);
+  } finally { after.close(); }
+});

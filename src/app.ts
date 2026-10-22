@@ -167,6 +167,7 @@ export function startApp(): () => void {
   }
   function setTab(name: string) {
     if (active) return;
+    viewer.hide();
     tab = name; options.open = false;
     document.querySelectorAll<HTMLButtonElement>('[data-tab]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.tab === name)));
     element('notebook-panel').hidden = name !== 'notebook'; element('viewer-panel').hidden = name === 'notebook';
@@ -242,5 +243,5 @@ export function startApp(): () => void {
     failed = true; error(value); element('storage').textContent = 'Notebook could not open'; element('recovery-actions').hidden = false; refresh();
   });
   refresh();
-  return () => { surface.close(); notebook.close(); pdfs.close(); db.close(); window.removeEventListener('beforeunload', unload); };
+  return () => { viewer.hide(); surface.close(); notebook.close(); pdfs.close(); db.close(); window.removeEventListener('beforeunload', unload); };
 }
