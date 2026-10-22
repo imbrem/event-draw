@@ -1,9 +1,11 @@
+import { NOTE_PAGE } from './note-pages.ts';
 import type { Page, ViewBox } from './model.ts';
 
 export const DEFAULT_PAGE_VIEW: Readonly<ViewBox> = { x: 0, y: 0, width: 1000, height: 1200 };
 const DEFAULT_BOARD_VIEW: Readonly<ViewBox> = { x: 0, y: 0, width: 1000, height: 750 };
 
 export const PAGE_PRESETS = [
+  { id: 'note', name: 'Note', label: 'Growing writing note', ...NOTE_PAGE },
   { id: 'a4', name: 'A4', label: 'A4 portrait', width: 595, height: 842 },
   { id: 'letter', name: 'Letter', label: 'US Letter', width: 612, height: 792 },
   { id: 'landscape', name: 'Landscape', label: 'A4 landscape', width: 842, height: 595 },

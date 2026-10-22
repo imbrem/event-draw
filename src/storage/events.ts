@@ -1,3 +1,4 @@
+import { NOTE_PAGE } from '../note-pages.ts';
 import { insertRow, scalar, type SqlDatabase } from './sql.ts';
 import { requireSchemaIdentity } from './schema.ts';
 import { initializeIdentity } from './identity.ts';
@@ -45,6 +46,11 @@ export function recordEvent(db: SqlDatabase, kind: string, options: EventOptions
 
 export function initializeNotebook(db: SqlDatabase) {
   if (!initializeIdentity(db)) return;
+  // Only initial creation chooses a default; reopening uses recorded page effects.
+  db.exec("UPDATE pages SET height=?,source_json=? WHERE id=1 AND source_kind='blank'", [
+    NOTE_PAGE.height,
+    JSON.stringify({ layout: 'note' }),
+  ]);
   const id = recordEvent(db, 'notebook.create', { data: { schema: requireSchemaIdentity(db) } });
   for (const { id: documentId, ...row } of db.all('SELECT * FROM documents'))
     insertRow(db, 'app_event_documents', { app_event_id: id, document_id: documentId, ...row });

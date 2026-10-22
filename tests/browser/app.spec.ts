@@ -14,14 +14,14 @@ import { join } from 'node:path';
 // WebKit's ephemeral test contexts do not support OPFS. Exercise persistence
 // in an isolated on-disk profile instead; never use the user's Safari profile.
 const test = base.extend({
-  context: async ({ context, browserName, baseURL, viewport, acceptDownloads }, use) => {
+  context: async ({ context, browserName, baseURL, viewport, acceptDownloads, serviceWorkers, hasTouch }, use) => {
     if (browserName !== 'webkit') {
       await use(context);
       return;
     }
     const directory = mkdtempSync(join(tmpdir(), 'event-draw-browser-'));
     const persistent = await webkit.launchPersistentContext(directory, {
-      baseURL, viewport: viewport ?? undefined, acceptDownloads,
+      baseURL, viewport: viewport ?? undefined, acceptDownloads, serviceWorkers, hasTouch,
     });
     try {
       // WebKit's default data store can retain origin data between launches.
@@ -33,6 +33,8 @@ const test = base.extend({
       await reset.goto(new URL('/__test_reset__', baseURL).href);
       await reset.evaluate(async () => {
         localStorage.clear();
+        for (const registration of await navigator.serviceWorker.getRegistrations()) await registration.unregister();
+        for (const key of await caches.keys()) if (key.startsWith('event-draw-shell-')) await caches.delete(key);
         const root = await navigator.storage.getDirectory();
         try { await root.removeEntry('event-draw-v1', { recursive: true }); }
         catch (error) {
@@ -49,18 +51,19 @@ const test = base.extend({
   },
 });
 
-async function stroke(page: Page, points = [[100, 150], [500, 150]]) {
+async function stroke(page: Page, points = [[100, 150], [500, 150]], keepScroll = false) {
   await expect(page.locator('#save-state')).toHaveText('Saved');
   await menu(page, false);
   await page.locator('#ink-settings').evaluate((e) => { (e as HTMLDetailsElement).open = false; });
   const canvas = page.locator('#canvas');
   // A tall page can intersect the viewport while its drawing start is above it
   // (notably after reloading with the footer scrolled into view).
-  await canvas.evaluate((c) => c.scrollIntoView({ block: 'start' }));
+  if (!keepScroll) await page.locator('#page-viewport').evaluate(e => { e.scrollTop = 0; });
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
   const box = (await canvas.boundingBox())!;
-  const view = await canvas.evaluate((c) => [Number((c as HTMLCanvasElement).dataset.viewWidth), Number((c as HTMLCanvasElement).dataset.viewHeight)]);
-  const positions = points.map(([x, y]) => ({ x: box.x + x / view[0] * box.width,
-    y: box.y + y / view[1] * box.height }));
+  const view = await canvas.evaluate((c) => [Number((c as HTMLCanvasElement).dataset.viewWidth), Number((c as HTMLCanvasElement).dataset.viewHeight), Number((c as HTMLCanvasElement).dataset.viewX ?? 0), Number((c as HTMLCanvasElement).dataset.viewY ?? 0)]);
+  const positions = points.map(([x, y]) => ({ x: box.x + (x - view[2]) / view[0] * box.width,
+    y: box.y + (y - view[3]) / view[1] * box.height }));
   await page.mouse.move(positions[0].x, positions[0].y);
   await page.mouse.down();
   for (const p of positions.slice(1)) await page.mouse.move(p.x, p.y, { steps: 8 });
@@ -1459,4 +1462,113 @@ test('library SQLite save flushes the active text draft and the mobile picker fi
   await page.locator('#close-notebook-library').click();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
   await expect(page.locator('#show-notebooks')).toBeInViewport();
+});
+
+test('Notes workspace scrolls a growing note, culls offscreen ink and preserves geometry on rotation', async ({ page }) => {
+  await page.setViewportSize({ width: 820, height: 1180 });
+  const errors: string[] = []; page.on('pageerror', e => errors.push(e.message));
+  await page.goto('./');
+  await expect(page.locator('#save-state')).toHaveText('Saved');
+  await menu(page); await page.getByLabel('Writing workspace').selectOption('notes'); await menu(page, false);
+  await expect(page.locator('#app')).toHaveAttribute('data-workspace', 'notes');
+  await expect(page.locator('#touch')).not.toBeChecked();
+  const paper = page.locator('#paper'), viewport = page.locator('#page-viewport'), canvas = page.locator('#canvas');
+  expect((await paper.boundingBox())!.width).toBeGreaterThan(810);
+  await stroke(page, [[100, 150], [500, 180]]);
+  await viewport.evaluate(e => { e.scrollTop = e.scrollHeight; });
+  await expect.poll(() => canvas.getAttribute('data-view-y').then(Number)).toBeGreaterThan(100);
+  await stroke(page, [[100, 1450], [500, 1500]], true);
+  await expect(page.locator('#counts')).toContainText('2 visible');
+  const before = await exported(page);
+  const traces = before.prepare('SELECT * FROM stroke_events ORDER BY id').all();
+  expect(before.prepare('SELECT height FROM current_pages WHERE id=1').get()!.height).toBe(2400);
+  before.close();
+  await page.setViewportSize({ width: 1180, height: 820 });
+  await expect.poll(async () => (await paper.boundingBox())!.width).toBeGreaterThan(1170);
+  await viewport.evaluate(e => { e.scrollTop = e.scrollHeight; });
+  await expect.poll(() => canvas.getAttribute('data-rendered-shapes').then(Number)).toBe(0);
+  await viewport.evaluate(e => { e.scrollTop = 0; });
+  await expect.poll(() => canvas.getAttribute('data-rendered-shapes').then(Number)).toBe(1);
+  await expect(canvas).toHaveAttribute('data-indexed-shapes', '2');
+  expect(await canvas.evaluate(c => (c as HTMLCanvasElement).width * (c as HTMLCanvasElement).height)).toBeLessThan(5_000_000);
+  const after = await exported(page);
+  expect(after.prepare('SELECT * FROM stroke_events ORDER BY id').all()).toEqual(traces);
+  expect(after.prepare('SELECT height FROM current_pages WHERE id=1').get()!.height).toBe(2400);
+  after.close();
+  await page.screenshot({ path: `test-results/notes-landscape-${test.info().project.name}.png` });
+  await page.setViewportSize({ width: 820, height: 1180 });
+  await page.screenshot({ path: `test-results/notes-portrait-${test.info().project.name}.png` });
+  expect(errors).toEqual([]);
+});
+
+test.describe('installed browser host', () => {
+  test.use({ serviceWorkers: 'allow' });
+
+test('installable app caches its shell and reopens notebook ink and an embedded PDF offline', async ({ page, context }) => {
+  await page.goto('./');
+  const worker = await page.request.get('./sw.js');
+  test.skip(!(await worker.text()).includes('event-draw-shell-'), 'Service worker is emitted by the production build only');
+  await expect(page.locator('#offline-status')).toContainText('ready offline', { timeout: 30_000 });
+  await expect.poll(() => page.evaluate(() => !!navigator.serviceWorker.controller)).toBe(true);
+  const manifest = await (await page.request.get('./manifest.webmanifest')).json();
+  expect(manifest.display).toBe('standalone'); expect(manifest.orientation).toBe('any'); expect(manifest.scope).toBe('./');
+  for (const icon of manifest.icons) expect((await page.request.get('./' + icon.src)).status()).toBe(200);
+  await menu(page); await page.locator('#pdf-file').setInputFiles(pdfFixture.pathname);
+  await expect(page.locator('#save-state')).toHaveText('Saved');
+  await stroke(page);
+  await context.setOffline(true);
+  try {
+    await page.reload();
+    await expect(page.locator('#save-state')).toHaveText('Saved');
+    await expect(page.locator('#counts')).toContainText('1 visible');
+    await expect(page.locator('#pdf-canvas')).toBeVisible();
+    await stroke(page, [[100, 230], [450, 270]]);
+    await expect(page.locator('#counts')).toContainText('2 visible');
+  } finally { await context.setOffline(false); }
+});
+
+});
+
+test.describe('touch writing workspace', () => {
+  test.use({ hasTouch: true, viewport: { width: 820, height: 1180 } });
+  test('automatically uses Notes, scrolls with one finger and captures pen separately', async ({ page }) => {
+    await page.addInitScript(() => { if (!localStorage.getItem('event-draw-toolbar')) localStorage.setItem('event-draw-toolbar', JSON.stringify({ preset: 'full', labels: 'auto' })); });
+    await page.goto('./');
+    await expect(page.locator('#save-state')).toHaveText('Saved');
+    await expect(page.locator('#app')).toHaveAttribute('data-workspace', 'notes');
+    await expect(page.locator('#touch')).not.toBeChecked();
+    await expect(page.locator('#tool-picker button')).toHaveCount(5);
+    await page.locator('#canvas').evaluate(c => {
+      c.setPointerCapture = () => {};
+      const r = c.getBoundingClientRect();
+      const send = (type: string, y: number) => c.dispatchEvent(new PointerEvent(type, { pointerId: 41, pointerType: 'touch', button: 0, buttons: type === 'pointerup' ? 0 : 1, clientX: r.left + 200, clientY: r.top + y }));
+      send('pointerdown', 500); send('pointermove', 220); send('pointerup', 220);
+    });
+    await expect.poll(() => page.locator('#page-viewport').evaluate(e => e.scrollTop)).toBeGreaterThan(200);
+    await expect(page.locator('#counts')).toContainText('0 raw strokes');
+    await page.locator('#canvas').evaluate(c => {
+      const r = c.getBoundingClientRect();
+      const send = (type: string, x: number) => c.dispatchEvent(new PointerEvent(type, { pointerId: 42, pointerType: 'pen', button: 0, buttons: type === 'pointerup' ? 0 : 1, pressure: .6, clientX: r.left + x, clientY: r.top + 200 }));
+      send('pointerdown', 100); send('pointermove', 300); send('pointerup', 500);
+    });
+    await expect(page.locator('#counts')).toContainText('1 visible · 1 raw strokes');
+    await menu(page);
+    await page.locator('#ink-settings').evaluate(e => { (e as HTMLDetailsElement).open = true; });
+    await page.locator('#touch').check();
+    await menu(page, false);
+    await page.reload();
+    await expect(page.locator('#save-state')).toHaveText('Saved');
+    await expect(page.locator('#touch')).toBeChecked();
+    await menu(page);
+    await page.locator('#new-document-layout').selectOption('fixed');
+    await page.locator('#new-document').click();
+    await expect(page.locator('#save-state')).toHaveText('Saved');
+    const db = await exported(page);
+    try {
+      const layouts = db.prepare('SELECT source_json,height FROM current_pages ORDER BY id').all();
+      expect(layouts.map(p => p.source_json)).toEqual(['{"layout":"note"}', '{}']);
+      expect(layouts[1].height).toBe(1200);
+    } finally { db.close(); }
+    await page.screenshot({ path: `test-results/touch-notes-${test.info().project.name}.png` });
+  });
 });

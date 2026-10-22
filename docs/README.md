@@ -14,6 +14,8 @@ A research change to processing, exchange or UI should reuse the other boundarie
 | Processing | `ink.ts`, `plugins.ts`, `live-ink.ts` | Versioned smoothing/width/rejection and validated immutable outputs |
 | Interaction | `interactions.ts`, `geometry.ts`, `erasure.ts`, `live-eraser.ts` | Replaceable lasso/touch transforms, append-only erasing and capture adapter |
 | Persistence | `journal.ts`, `storage/*`, `schema.sql` | Transactions, immutable resources, append-only effects and projections |
+| Writing surface | `note-pages.ts`, `ui/writing-workspace.ts`, `ui/page-surface.ts`, `ui/surface-layout.ts`, `spatial.ts` | Journaled growth, host layout preference, windowed canvas and painted-bounds queries |
+| Installation | `platform/installable-app.ts`, `scripts/offline-shell.ts`, `public/manifest.webmanifest` | Browser install/update lifecycle and build-scoped offline shell |
 | Library | `storage/app-catalog.ts`, `storage/notebook-workspace.ts`, `ui/notebook-library.ts` | App/config catalog, separate notebook files and safe connection switching |
 | Identity | `storage/identity.ts`, `storage/events.ts` | Namespaces, logical clock, object registry and lifecycle events |
 | Exchange | `streams.ts`, `storage/event-stream.ts` | Framing, record bindings, transforms and reconstruction policy |

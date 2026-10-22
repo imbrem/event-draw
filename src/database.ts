@@ -1,3 +1,4 @@
+import type { BlankPageLayout } from './note-pages.ts';
 import type {
   CaptureSession,
   Gesture,
@@ -120,11 +121,20 @@ export class DatabaseClient {
   gesture(gesture: Gesture, sessionId: number) {
     return this.call<State>('gesture', { gesture, sessionId });
   }
-  addPage(documentId: number, afterPageId: number, width: number | null, height: number | null) {
-    return this.call<State>('addPage', { documentId, afterPageId, width, height });
+  addPage(
+    documentId: number,
+    afterPageId: number,
+    width: number | null,
+    height: number | null,
+    layout: BlankPageLayout = 'fixed',
+  ) {
+    return this.call<State>('addPage', { documentId, afterPageId, width, height, layout });
   }
-  createDocument(name: string) {
-    return this.call<State>('createDocument', name);
+  extendNote(pageId: number) {
+    return this.call<State>('extendNote', pageId);
+  }
+  createDocument(name: string, layout: BlankPageLayout = 'note') {
+    return this.call<State>('createDocument', { name, layout });
   }
   renameDocument(id: number, name: string) {
     return this.call<State>('renameDocument', { id, name });

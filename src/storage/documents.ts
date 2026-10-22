@@ -1,3 +1,4 @@
+import { NOTE_PAGE, isWritingNote, noteHeight, type BlankPageLayout } from '../note-pages.ts';
 import { identifyObject } from './identity.ts';
 import type { Document, Page, PdfImport, AssetImport, PageSource } from '../model.ts';
 import { insertRow, scalar, transaction, type Row, type SqlDatabase } from './sql.ts';
@@ -53,12 +54,12 @@ export class DocumentStore {
           [...Object.values(row), id],
         );
   }
-  create(name: string): number {
+  create(name: string, layout: BlankPageLayout = 'note'): number {
     return transaction(this.db, () => {
       insertRow(this.db, 'documents', { name: this.uniqueName(name), pdf_hash: null });
       const id = scalar(this.db, 'SELECT last_insert_rowid()');
       identifyObject(this.db, 'documents', id);
-      this.insertPage(id, 1, 1000, 1200);
+      this.insertPage(id, 1, 1000, layout === 'note' ? NOTE_PAGE.height : 1200, 'blank', null, null, layout);
       this.effect(this.record('document.add', id), id);
       return id;
     });
@@ -204,6 +205,7 @@ export class DocumentStore {
     sourceKind = 'blank',
     sourceHash: string | null = null,
     sourcePage: number | null = null,
+    layout: BlankPageLayout = 'fixed',
   ) {
     if (
       width !== null &&
@@ -216,7 +218,7 @@ export class DocumentStore {
       source_page: sourcePage,
       source_kind: sourceKind,
       source_hash: sourceHash,
-      source_json: '{}',
+      source_json: layout === 'note' ? JSON.stringify({ layout }) : '{}',
       deleted: 0,
       kind: width === null ? 'whiteboard' : 'page',
       width,
@@ -226,7 +228,13 @@ export class DocumentStore {
     identifyObject(this.db, 'pages', id);
     return id;
   }
-  addPage(documentId: number, afterPageId: number, width: number | null, height: number | null): number {
+  addPage(
+    documentId: number,
+    afterPageId: number,
+    width: number | null,
+    height: number | null,
+    layout: BlankPageLayout = 'fixed',
+  ): number {
     return transaction(this.db, () => {
       this.syncCaches();
       const after = this.pages().find((p) => p.document_id === documentId && p.id === afterPageId);
@@ -235,10 +243,29 @@ export class DocumentStore {
         'UPDATE pages SET page_number=page_number+1 WHERE document_id=? AND deleted=0 AND page_number>?',
         [documentId, after.page_number],
       );
-      const id = this.insertPage(documentId, after.page_number + 1, width, height);
+      const id = this.insertPage(
+        documentId,
+        after.page_number + 1,
+        width,
+        height,
+        'blank',
+        null,
+        null,
+        layout,
+      );
       this.effect(this.record('page.add', documentId, id, { afterPageId }), documentId);
       return id;
     });
+  }
+  /** Auto-growth belongs to the originating edit, including its undo boundary. */
+  growNote(pageId: number, bottom?: number, eventId?: number) {
+    const page = this.pages().find((p) => p.id === pageId);
+    if (!page || page.kind !== 'page' || !isWritingNote(page)) return;
+    const height = bottom === undefined ? page.height + NOTE_PAGE.chunk : noteHeight(page.height, bottom);
+    if (height === page.height) return;
+    this.syncCaches();
+    this.db.exec('UPDATE pages SET height=? WHERE id=?', [height, pageId]);
+    this.effect(eventId ?? this.record('page.resize', page.document_id, pageId), page.document_id);
   }
   changePage(pageId: number, action: 'earlier' | 'later' | 'delete') {
     transaction(this.db, () => {

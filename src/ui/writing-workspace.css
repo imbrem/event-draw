@@ -1,0 +1,38 @@
+#app { height: min(100dvh, var(--app-height, 100dvh)); }
+/* Presentation is a host preference, independent of page kind and journal data. */
+.app-bar { padding-top: max(7px, env(safe-area-inset-top)); padding-left: max(14px, env(safe-area-inset-left)); padding-right: max(14px, env(safe-area-inset-right)); }
+#new-writing-note { display: grid; place-items: center; flex: none; width: 40px; padding: 8px; }
+#new-writing-note svg { width: 23px; height: 23px; }
+.page-viewport { overscroll-behavior: contain; overflow-anchor: none; }
+#app[data-workspace=notes] { background: #fffefa; }
+[data-workspace=notes] .app-bar { gap: 8px; background: #fffefaee; border-bottom: 0; }
+[data-workspace=notes] .app-bar > :is(button, details > summary) { border-color: transparent; background: transparent; }
+[data-workspace=notes] .page-frame { padding: 0; padding-bottom: 180px; }
+[data-workspace=notes] .paper { margin: 0 auto auto; box-shadow: none; }
+[data-workspace=notes] .page-viewport { background: white; scroll-padding-bottom: 180px; }
+[data-workspace=notes] .ink-dock {
+  position: absolute; left: max(12px, env(safe-area-inset-left)); right: max(12px, env(safe-area-inset-right)); bottom: max(12px, env(safe-area-inset-bottom));
+  width: auto; max-width: 1000px; margin: auto; padding: 8px 12px; gap: 6px;
+  border: 1px solid #d9ded7aa; border-radius: 22px; background: #fffefaee;
+  box-shadow: 0 4px 24px #203b421c; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+}
+[data-workspace=notes] .ink-dock[data-labels=auto] .toolbar-label { display: none; }
+[data-workspace=notes] .ink-dock .tool-picker button { min-width: 44px; }
+[data-workspace=notes] .ink-dock .tool-picker button[aria-pressed=true] { border-radius: 12px; }
+[data-workspace=notes] .status-indicators { position: absolute; left: 0; bottom: 0; z-index: 4; max-width: 100%; background: transparent; pointer-events: none; min-height: 0; padding: 0 10px; font-size: 9px; opacity: .65; }
+[data-workspace=notes] .selection-controls { position: absolute; top: 8px; left: 8px; right: 8px; border: 1px solid #d9ded7; border-radius: 12px; box-shadow: 0 3px 12px #203b4215; z-index: 3; }
+.options-panel { top: calc(61px + env(safe-area-inset-top)); bottom: max(8px, env(safe-area-inset-bottom)); }
+@media (max-width: 720px) {
+  [data-workspace=notes] .ink-dock { padding: 6px; gap: 3px; border-radius: 18px; }
+  [data-workspace=notes] .ink-dock > .paint-toolbar, [data-workspace=notes] .ink-dock > .thickness-controls { order: 0; }
+  [data-workspace=notes] .app-bar { gap: 3px; padding-left: max(8px, env(safe-area-inset-left)); padding-right: max(8px, env(safe-area-inset-right)); }
+  [data-workspace=notes] #page-navigation { gap: 0; }
+  [data-workspace=notes] #page-navigation button { width: 30px; }
+  [data-workspace=notes] #page-number { width: 28px; }
+  [data-workspace=notes] #page-total { min-width: 16px; }
+  [data-workspace=notes] #document-title { width: 60px; }
+}
+@media (pointer: coarse) {
+  #document-title { font-size: 16px; }
+  [data-workspace=notes] #save-state { display: none; }
+}

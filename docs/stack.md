@@ -13,6 +13,7 @@ React or other UI framework. There is no native wrapper, application server or s
 | Input | Pointer Events, coalesced/predicted batches and raw updates when available | Browser-specific capture; another host can populate the shared observation model. Missing optional values remain nullable. |
 | Ink rendering | Canvas 2D and cached `Path2D`; variable-radius discs and tangent hulls | Browser-specific renderer. Baked vertices/width factors and shape placement can feed another renderer. |
 | Page content | PDF.js 6.4, markdown-it 15, KaTeX 0.19, DOM/SVG/image renderers; pdf-lib and html2canvas-pro for export | Content IDs/backends, payload codecs and placement are reusable; default viewing/editing/export adapters depend on the browser/libraries. |
+| Installation | Web manifest, Home Screen icons, Vite-generated static-shell service worker | Browser host only; caches known build assets, never notebook files or arbitrary URLs. |
 | Shell and tools | Small TypeScript DOM modules; typed frontend host/commands, extension slots, configurable toolbar/footer | Default controls require DOM; headless commands and data contracts are separate. Trusted modules only. |
 | Tooling | Vite 8, TypeScript 7, pnpm 12, Node 24+, Node test runner and Playwright Chromium/WebKit | Static hosting; GitHub Actions checks builds/tests and deploys to public GitHub Pages. |
 
@@ -23,6 +24,57 @@ individual processors, geometry or content adapters. Browser observation fields 
 browser-shaped even though their TypeScript types are DOM-free. Native capture should
 preserve its own evidence through an explicit adapter or new versioned capture format.
 Worker RPC and incremental state patches are disposable transport, not notebook authority.
+
+## Writing surface and spatial queries
+
+A notebook can mix growing blank notes, fixed-size pages and whiteboards. New blank notes
+start at 1000 × 1600 logical units with `source_json.layout = "note"`; this is an extensible
+blank-page hint, not a new SQL schema. `note-pages.ts` contains the DOM-free growth policy.
+Edits near the bottom add 800-unit chunks with 320 units of writing room. Positioned content
+uses its rotated bounds; linked non-rendered notes do not extend the page. Growth effects
+belong to the original edit, so undo/redo, SQLite snapshots and event replay agree. Explicit
+**Add writing space** records `page.resize`. Erasing does not automatically shrink a note.
+Existing notes retain their recorded dimensions and layout.
+
+`WritingWorkspace` owns optional host preferences (automatic/Notes/Page and finger drawing).
+Automatic chooses Notes on coarse-pointer devices. `PageSurface` handles width-fit layout,
+scroll/zoom and orientation; `surface-layout.ts` maps the visible CSS rectangle to a logical
+page viewport. The visual viewport tracks rotation and the keyboard. `NotebookCanvas` captures that per-delivery transform, keeping observations
+correct after scrolling or rotation. Full-page content placement uses a separate view.
+Long notes retain a full-size scrolling paper element, but only a viewport-sized ink canvas.
+Canvas allocation is bounded by the screen and the existing 16-million-pixel/DPR cap.
+
+`InkIndex` is a disposable **in-memory grid over currently drawn shapes' painted bounds**,
+including width, scale, rotation and fractional erasures. `select(view)` returns intersecting
+shapes in paint order. Cells have bounded expansion with an overflow list for very long shapes.
+The renderer rebuilds the index when the immutable scene changes; scrolling queries it without
+serializing every shape, and only intersecting shapes need Canvas paths. Cached settled ink
+and weak geometry caches remain independent of notebook authority. This avoids adding a
+SQL index or schema migration just for rendering. The worker still materializes notebook state
+and transfers scene data: this is paint culling, not out-of-core notebook loading. A future
+worker-side temp R-tree and windowed transport can replace this adapter if measurements justify
+paging very large notebooks; a single enormous trace can still dominate geometry work.
+
+## Installed browser app and native next
+
+`scripts/offline-shell.ts` generates a versioned cache of the exact production shell, including
+worker/WASM/PDF/font assets and icons. It supports relative manifests on Pages subpaths.
+`platform/installable-app.ts` owns registration/install/update controls. Development has no
+service worker. New builds wait for an explicit update; the app drains text and queued edits
+before activating and reloading. Remote URLs are never opportunistically cached. Notebook
+and embedded blobs remain in OPFS/SQLite, independently of shell cache cleanup.
+
+Safari's Home Screen web app is the current fullscreen iPad host, with safe-area padding,
+dynamic viewport height and no orientation lock. Browser UI/storage policies, keyboard and
+pencil behavior still need testing on physical iPads. Export before moving between Safari and
+Home Screen storage; local persistence is not a backup. The service worker cannot make remote,
+non-embedded content available offline.
+
+Next is a native host (Xcode/signing required) around shared frontend/core contracts. A
+WKWebView wrapper can initially share UI, journal and renderers, while native file access or
+Pencil capture replace explicit adapters. Native capture must preserve native observations
+rather than pretending they are browser Pointer Events. A more native SwiftUI shell can reuse
+the schema and processor API later. No native wrapper or general WASM plugin loader ships yet.
 
 ## Sustained erasing
 

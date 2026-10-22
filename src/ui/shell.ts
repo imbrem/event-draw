@@ -1,5 +1,5 @@
 import { PAGE_PRESETS } from '../pages.ts';
-import { undoIcon, redoIcon, notebooksIcon } from './icons.ts';
+import { undoIcon, redoIcon, notebooksIcon, composeIcon } from './icons.ts';
 
 export function element<T extends HTMLElement = HTMLElement>(id: string): T {
   const value = document.getElementById(id);
@@ -14,6 +14,7 @@ export function mountShell() {
     <input id="document-title" aria-label="Document title" placeholder="Blank notes" autocomplete="off" maxlength="200">
     <nav id="page-navigation" aria-label="Page navigation"></nav>
     <span id="save-state" role="status">Opening…</span>
+    <button id="new-writing-note" aria-label="New writing note" title="New writing note">${composeIcon}</button>
     <button id="return-notebook" hidden>Notebook</button>
     <details id="options" class="options-menu"><summary>Menu</summary>
       <div class="options-panel">
@@ -30,7 +31,7 @@ export function mountShell() {
         <section aria-label="Documents"><h2>Document</h2>
           <label id="document-choice">Choose document <select id="document" aria-label="Document"></select></label>
           <label>Name <input id="document-name" aria-label="Document name" placeholder="Blank notes"></label>
-          <button id="rename-document">Rename</button><button id="new-document">New blank document</button>
+          <button id="rename-document">Rename</button><label>New note layout <select id="new-document-layout"><option value="note">Growing canvas</option><option value="fixed">Fixed pages</option></select></label><button id="new-document">New blank document</button>
           <label class="file-button">Open PDF <input id="pdf-file" type="file" accept="application/pdf,.pdf"></label>
           <label><input id="insert-pdf" type="checkbox"> Insert PDF after current page</label>
           <label class="file-button">Add image / SVG <input id="image-file" type="file" accept="image/*,.svg"></label>
@@ -46,12 +47,17 @@ export function mountShell() {
           <div class="row"><button id="page-earlier">Move earlier</button><button id="page-later">Move later</button></div>
           <button id="delete-page">Delete page</button>
         </section>
-        <section aria-label="Interface"><h2>Toolbar</h2>
-          <label>Layout <select id="toolbar-layout" aria-label="Toolbar layout"><option value="full">Full</option><option value="minimal">Minimal</option></select></label>
+        <section aria-label="Interface"><h2>Workspace</h2>
+          <label>Writing view <select id="workspace-mode" aria-label="Writing workspace"><option value="auto">Automatic · Notes on touch devices</option><option value="notes">Notes · fill width</option><option value="page">Page · fit whole page</option></select></label>
+          <button id="extend-note" hidden>Add writing space</button>
+          <p>Notes fills the screen width. Pencil draws; fingers scroll unless Finger drawing is enabled. Use New writing note for a page that grows with your ink and text.</p>
+          <h2>Toolbar</h2>
+          <label>Layout <select id="toolbar-layout" aria-label="Toolbar layout"><option value="auto">Automatic</option><option value="notes">Notes</option><option value="full">Full</option><option value="minimal">Minimal</option></select></label>
           <label>Labels <select id="toolbar-labels" aria-label="Toolbar labels"><option value="auto">Automatic</option><option value="icons">Icons only</option><option value="labels">Show labels</option></select></label>
           <div id="more-tools" class="tool-picker" role="group" aria-label="More tools" hidden></div>
           <div id="toolbar-overflow" class="toolbar-overflow" hidden></div>
         </section>
+        <section id="installable-app" aria-label="App installation"></section>
         <section><h2>Export & local state</h2>
           <details class="export-menu"><summary>Export SQLite ↓</summary><div class="export-options">
             <button id="export-full">Save notebook · full history</button><button id="export-visible">Visible state + provenance</button><button id="export-drawn">Just what’s drawn</button>

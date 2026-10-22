@@ -12,10 +12,7 @@ import { appendInkPath, paintInkPath, drawInk, prepareCanvas } from './ui/drawin
 import { LiveInk } from './live-ink.ts';
 import { LiveEraser } from './live-eraser.ts';
 import { InkIndex } from './spatial.ts';
-const settled = new WeakMap<
-  HTMLCanvasElement,
-  { key: string; canvas: HTMLCanvasElement; outputs: string[] }
->();
+const settled = new WeakMap<HTMLCanvasElement, { key: string; canvas: HTMLCanvasElement; index: InkIndex }>();
 
 const live = new WeakMap<Gesture, { processor: LiveInk; path: Path2D; count: number; generation: number }>();
 const erasers = new WeakMap<Gesture, LiveEraser>();
@@ -75,45 +72,27 @@ export function render(canvas: HTMLCanvasElement, scene: Scene) {
     }
     erased = planner.update(eraser, shapes);
   }
-  const key = JSON.stringify([
-    canvas.width,
-    canvas.height,
-    scene.view,
-    shapes.map((s) => [
-      s.id,
-      s.output_id,
-      s.start_index,
-      s.end_index,
-      s.offset_x,
-      s.offset_y,
-      s.scale,
-      s.rotation,
-      s.style_id,
-      s.color,
-      s.line_width,
-      s.opacity,
-      s.blend_mode,
-      s.paint_order,
-    ]),
-  ]);
+  let spatial = indices.get(canvas);
+  if (
+    !spatial ||
+    (spatial.shapes !== shapes &&
+      (spatial.shapes.length !== shapes.length || shapes.some((s, i) => s !== spatial!.shapes[i])))
+  ) {
+    spatial = { shapes, index: new InkIndex(shapes) };
+    indices.set(canvas, spatial);
+  } else spatial.shapes = shapes;
+  const key = JSON.stringify([canvas.width, canvas.height, scene.view]);
   let cache = settled.get(canvas);
-  if (!move && !eraser && cache?.key === key && shapes.every((s, i) => s.output_json === cache!.outputs[i])) {
+  if (!move && !eraser && cache?.key === key && cache.index === spatial.index) {
     context.save();
     context.setTransform(1, 0, 0, 1, 0, 0);
     context.drawImage(cache.canvas, 0, 0);
     context.restore();
   } else {
-    let spatial = indices.get(canvas);
-    if (
-      !spatial ||
-      spatial.shapes.length !== shapes.length ||
-      shapes.some((s, i) => s !== spatial!.shapes[i])
-    ) {
-      spatial = { shapes: shapes.slice(), index: new InkIndex(shapes) };
-      indices.set(canvas, spatial);
-    }
-    const visible = spatial.index.query(scene.view);
-    for (const shape of shapes.filter((s) => visible.has(s.id))) {
+    const visible = spatial.index.select(scene.view);
+    canvas.dataset.renderedShapes = String(visible.length);
+    canvas.dataset.indexedShapes = String(shapes.length);
+    for (const shape of visible) {
       for (const path of paths(shape, erased?.get(shape.id)))
         paintInkPath(context, path, shape.color, shape.opacity, shape.blend_mode);
     }
@@ -122,12 +101,12 @@ export function render(canvas: HTMLCanvasElement, scene: Scene) {
       layer.width = canvas.width;
       layer.height = canvas.height;
       layer.getContext('2d')!.drawImage(canvas, 0, 0);
-      cache = { key, canvas: layer, outputs: shapes.map((s) => s.output_json) };
+      cache = { key, canvas: layer, index: spatial.index };
       settled.set(canvas, cache);
     }
   }
   const selected = new Set(scene.selected);
-  const selectedShapes = shapes.filter((s) => selected.has(s.id));
+  const selectedShapes = selected.size ? shapes.filter((s) => selected.has(s.id)) : [];
   for (const shape of selectedShapes)
     drawInk(context, shapeInk(shape), '#3789a43b', shape.line_width + 5 * unit);
   const bounds = selectionBounds(selectedShapes);

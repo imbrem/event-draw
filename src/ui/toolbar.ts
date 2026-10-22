@@ -17,11 +17,17 @@ export const minimalToolbar: ToolbarConfig = {
   tools: ['text', 'pen', 'highlighter', 'erase-parts', 'erase-strokes', 'lasso'],
   sections: ['tools', 'history', 'color', 'thickness'],
 };
-const presets = { full: fullToolbar, minimal: minimalToolbar };
+export const notesToolbar: ToolbarConfig = {
+  tools: ['pen', 'highlighter', 'erase-parts', 'lasso', 'text'],
+  sections: ['tools', 'history', 'color', 'thickness'],
+};
+const presets = { notes: notesToolbar, full: fullToolbar, minimal: minimalToolbar };
 const preferenceKey = 'event-draw-toolbar';
 
 /** Move existing controls, rather than duplicating controls or their state. */
 export class DrawingToolbar {
+  private notes = false;
+  private apply = () => {};
   private sections = new Map<ToolbarSection, HTMLElement>();
   private events = new AbortController();
   constructor(
@@ -34,11 +40,13 @@ export class DrawingToolbar {
   ) {
     for (const section of root.querySelectorAll<HTMLElement>('[data-toolbar-section]'))
       this.sections.set(section.dataset.toolbarSection as ToolbarSection, section);
-    let preset: keyof typeof presets = 'full';
+    let preset: keyof typeof presets | 'auto' = 'auto';
     let labelMode: ToolbarLabels = 'auto';
     try {
       const saved = JSON.parse(localStorage.getItem(preferenceKey) ?? 'null');
-      if (saved?.preset === 'minimal') preset = 'minimal';
+      // Earlier builds saved Full even when the user never chose a layout.
+      if (['minimal', 'notes'].includes(saved?.preset) || (saved?.version === 2 && saved.preset === 'full'))
+        preset = saved.preset;
       if (['auto', 'icons', 'labels'].includes(saved?.labels)) labelMode = saved.labels;
     } catch {
       /* A view preference is optional when browser storage is unavailable. */
@@ -52,19 +60,34 @@ export class DrawingToolbar {
       labels.value = labelMode;
     }
     const apply = () => {
-      const config = picker.value === 'custom' ? custom! : presets[picker.value as keyof typeof presets];
+      const config =
+        picker.value === 'custom'
+          ? custom!
+          : picker.value === 'auto'
+            ? this.notes
+              ? notesToolbar
+              : fullToolbar
+            : presets[picker.value as keyof typeof presets];
       this.configure({ ...config, labels: labels.value as ToolbarLabels });
       if (picker.value !== 'custom') {
         try {
-          localStorage.setItem(preferenceKey, JSON.stringify({ preset: picker.value, labels: labels.value }));
+          localStorage.setItem(
+            preferenceKey,
+            JSON.stringify({ version: 2, preset: picker.value, labels: labels.value }),
+          );
         } catch {
           /* Keep the controls usable without saving preferences. */
         }
       }
     };
+    this.apply = apply;
     picker.addEventListener('change', apply, { signal: this.events.signal });
     labels.addEventListener('change', apply, { signal: this.events.signal });
     apply();
+  }
+  setNotes(enabled: boolean) {
+    this.notes = enabled;
+    this.apply();
   }
   configure(config: ToolbarConfig) {
     if (

@@ -223,12 +223,15 @@ async function handle(request: { id: number; method: string; payload: any }) {
         value = journal.gesture(request.payload.gesture as Gesture, request.payload.sessionId);
         break;
       case 'addPage': {
-        const { documentId, afterPageId, width, height } = request.payload;
-        value = journal.addPage(documentId, afterPageId, width, height);
+        const { documentId, afterPageId, width, height, layout } = request.payload;
+        value = journal.addPage(documentId, afterPageId, width, height, layout);
         break;
       }
+      case 'extendNote':
+        value = journal.extendNote(request.payload);
+        break;
       case 'createDocument':
-        value = journal.createDocument(request.payload);
+        value = journal.createDocument(request.payload.name, request.payload.layout);
         break;
       case 'renameDocument':
         value = journal.renameDocument(request.payload.id, request.payload.name);

@@ -2,13 +2,15 @@ import { selectionBounds } from './geometry.ts';
 import type { ViewBox, VisibleShape } from './model.ts';
 /** Rebuildable grid: objects spanning too many cells use a bounded overflow list. */
 export class InkIndex {
+  private shapes = new Map<number, { shape: VisibleShape; order: number }>();
   private cells = new Map<string, Set<number>>();
   private bounds = new Map<number, ViewBox>();
   private overflow = new Set<number>();
   private size: number;
   constructor(shapes: VisibleShape[], size = 256) {
     this.size = size;
-    for (const shape of shapes) {
+    for (const [order, shape] of shapes.entries()) {
+      this.shapes.set(shape.id, { shape, order });
       const box = selectionBounds([shape]);
       if (!box) continue;
       this.bounds.set(shape.id, box);
@@ -33,6 +35,13 @@ export class InkIndex {
     const keys = [];
     for (let i = x; i <= right; i++) for (let j = y; j <= bottom; j++) keys.push(i + ',' + j);
     return keys;
+  }
+  /** Query painted bounds, returning only intersecting shapes in original paint order. */
+  select(box: ViewBox): VisibleShape[] {
+    return [...this.query(box)]
+      .map((id) => this.shapes.get(id)!)
+      .sort((a, b) => a.order - b.order)
+      .map((item) => item.shape);
   }
   query(box: ViewBox): Set<number> {
     const keys = this.keys(box),

@@ -1,4 +1,7 @@
-import type { Document, Page } from '../model.ts';
+import { isWritingNote } from '../note-pages.ts';
+import { inkWindow } from './surface-layout.ts';
+import type { ViewBox } from '../model.ts';
+import type { Page } from '../model.ts';
 import type { PageSources } from '../page-sources.ts';
 
 /** Layout, zoom and cancellable background rendering. Coordinates remain page-local. */
@@ -8,6 +11,11 @@ export class PageSurface {
   private zoom = 1;
   private frame = 0;
   private observer: ResizeObserver;
+  private notes = false;
+  private cssScale = 1;
+  private windowFrame = 0;
+  private visibleView: ViewBox | undefined;
+  private events = new AbortController();
   private key = '';
   private abort = new AbortController();
   private rendering: Promise<void> = Promise.resolve();
@@ -22,6 +30,8 @@ export class PageSurface {
     canvas: HTMLCanvasElement,
     sources: PageSources,
     onStatus: PageSurface['onStatus'],
+    private ink: HTMLCanvasElement,
+    private onView: () => void,
   ) {
     this.viewport = viewport;
     this.paper = paper;
@@ -30,11 +40,27 @@ export class PageSurface {
     this.onStatus = onStatus;
     this.observer = new ResizeObserver(() => this.layout());
     this.observer.observe(viewport);
+    viewport.addEventListener('scroll', () => this.scheduleWindow(), {
+      passive: true,
+      signal: this.events.signal,
+    });
+  }
+  setNotes(enabled: boolean) {
+    if (this.notes === enabled) return;
+    this.notes = enabled;
+    this.layout();
+  }
+  inkView() {
+    return this.visibleView;
   }
   get aspect() {
-    return Math.max(1, this.viewport.clientWidth - 24) / Math.max(1, this.viewport.clientHeight - 24);
+    const padding = this.notes ? 0 : 24;
+    return (
+      Math.max(1, this.viewport.clientWidth - padding) / Math.max(1, this.viewport.clientHeight - padding)
+    );
   }
-  update(page: Page | undefined, _document?: Document) {
+  update(page: Page | undefined) {
+    const previous = this.page;
     this.page = page;
     const key = JSON.stringify([
       page?.id,
@@ -47,8 +73,10 @@ export class PageSurface {
     ]);
     if (key === this.key) return;
     this.key = key;
-    this.zoom = 1;
-    this.viewport.scrollTop = this.viewport.scrollLeft = 0;
+    if (previous?.id !== page?.id || previous?.source_hash !== page?.source_hash) {
+      this.zoom = 1;
+      this.viewport.scrollTop = this.viewport.scrollLeft = 0;
+    }
     this.layout();
   }
   scale(factor: number, anchor?: { x: number; y: number }) {
@@ -77,22 +105,38 @@ export class PageSurface {
   invalidate() {
     this.abort.abort();
     this.key = '';
+    this.page = undefined;
+    this.visibleView = undefined;
+    this.zoom = 1;
+    this.viewport.scrollTop = this.viewport.scrollLeft = 0;
     delete this.paper.dataset.layout;
   }
   private layout() {
     const page = this.page;
     if (!page) return;
-    const width = Math.max(1, this.viewport.clientWidth - 24),
-      height = Math.max(1, this.viewport.clientHeight - 24);
-    const scale = page.kind === 'page' ? Math.min(width / page.width, height / page.height) * this.zoom : 1;
+    const writing = this.notes || isWritingNote(page),
+      padding = this.notes ? 0 : 24;
+    const width = Math.max(1, this.viewport.clientWidth - padding),
+      height = Math.max(1, this.viewport.clientHeight - padding);
+    const scale =
+      page.kind === 'page'
+        ? (writing ? width / page.width : Math.min(width / page.width, height / page.height)) * this.zoom
+        : 1;
     const w = page.kind === 'page' ? page.width * scale : width,
       h = page.kind === 'page' ? page.height * scale : height;
     const size = w + 'px:' + h + 'px:' + this.key;
-    if (this.paper.dataset.layout === size) return;
+    if (this.paper.dataset.layout === size) {
+      this.syncWindow();
+      return;
+    }
+    const top = this.viewport.scrollTop / this.cssScale;
+    this.cssScale = scale;
     this.paper.dataset.layout = size;
     this.paper.style.width = w + 'px';
     this.paper.style.height = h + 'px';
     this.paper.classList.toggle('whiteboard', page.kind === 'whiteboard');
+    this.viewport.scrollTop = top * scale;
+    this.syncWindow();
     const generation = ++this.generation;
     this.abort.abort();
     this.abort = new AbortController();
@@ -114,9 +158,40 @@ export class PageSurface {
       })();
     });
   }
+  private scheduleWindow() {
+    if (!this.windowFrame)
+      this.windowFrame = requestAnimationFrame(() => {
+        this.windowFrame = 0;
+        this.syncWindow();
+      });
+  }
+  private syncWindow() {
+    const page = this.page;
+    if (page?.kind === 'page' && (this.notes || isWritingNote(page))) {
+      const window = inkWindow(
+        this.paper.getBoundingClientRect(),
+        this.viewport.getBoundingClientRect(),
+        page.width,
+      );
+      this.visibleView = window.view;
+      Object.assign(this.ink.style, {
+        inset: 'auto',
+        left: window.left + 'px',
+        top: window.top + 'px',
+        width: window.width + 'px',
+        height: window.height + 'px',
+      });
+    } else {
+      this.visibleView = undefined;
+      this.ink.removeAttribute('style');
+    }
+    this.onView();
+  }
   close() {
     this.abort.abort();
     cancelAnimationFrame(this.frame);
     this.observer.disconnect();
+    this.events.abort();
+    cancelAnimationFrame(this.windowFrame);
   }
 }

@@ -1,3 +1,4 @@
+import { contentBottom, isWritingNote, type BlankPageLayout } from './note-pages.ts';
 import { planErasure } from './erasure.ts';
 import { tracePayloads } from './trace-codecs.ts';
 import { RawTraces } from './storage/raw-traces.ts';
@@ -100,6 +101,7 @@ export class Journal {
           'page.delete',
           'page.import',
           'page.source',
+          'page.resize',
           'document.rename',
         ].includes(kind),
       });
@@ -161,12 +163,18 @@ export class Journal {
       paint_order: shape.paint_order,
     });
   }
-  addPage(documentId: number, afterPageId: number, width: number | null, height: number | null): State {
-    this.documents.addPage(documentId, afterPageId, width, height);
+  addPage(
+    documentId: number,
+    afterPageId: number,
+    width: number | null,
+    height: number | null,
+    layout: BlankPageLayout = 'fixed',
+  ): State {
+    this.documents.addPage(documentId, afterPageId, width, height, layout);
     return this.state();
   }
-  createDocument(name: string): State {
-    this.documents.create(name);
+  createDocument(name: string, layout: BlankPageLayout = 'note'): State {
+    this.documents.create(name, layout);
     return this.state();
   }
   renameDocument(id: number, name: string): State {
@@ -209,12 +217,40 @@ export class Journal {
     return this.state();
   }
   setObject(input: ObjectInput): State {
-    this.objects.set(input);
-    return this.state();
+    return transaction(this.db, () => {
+      this.objects.set(input);
+      this.growNote(input.pageId);
+      return this.state();
+    });
   }
   deleteObject(pageId: number, id: number): State {
     this.objects.delete(pageId, id);
     return this.state();
+  }
+  extendNote(pageId: number): State {
+    return transaction(this.db, () => {
+      this.documents.growNote(pageId);
+      return this.state();
+    });
+  }
+  private growNote(pageId: number) {
+    if (!isWritingNote(this.documents.pages().find((p) => p.id === pageId))) return;
+    const eventId = scalar(this.db, 'SELECT max(id) FROM app_events');
+    const ink = new Set(
+      this.db
+        .all('SELECT shape_id FROM app_event_shapes WHERE app_event_id=? AND visible=1', [eventId])
+        .map((r) => r.shape_id),
+    );
+    const objects = new Set(
+      this.db
+        .all('SELECT object_id FROM app_event_objects WHERE app_event_id=? AND visible=1', [eventId])
+        .map((r) => r.object_id),
+    );
+    const bottom = contentBottom(
+      selectionBounds(this.visible(pageId).filter((s) => ink.has(s.id))),
+      this.objects.visible().filter((o) => o.page_id === pageId && objects.has(o.id)),
+    );
+    this.documents.growNote(pageId, bottom, eventId);
   }
   private detect(pageId: number) {
     this.detections.reconcile(
@@ -343,6 +379,7 @@ export class Journal {
           }
         }
       }
+      this.growNote(input.pageId);
       this.detect(input.pageId);
       return this.state();
     });
@@ -381,6 +418,7 @@ export class Journal {
         const next = this.shape(id, outputIndex(output.points, from), outputIndex(output.points, to));
         this.effect(eventId, { ...shape, id: next }, true);
       }
+      this.growNote(pageId);
       this.detect(pageId);
       return this.state();
     });
@@ -533,6 +571,7 @@ export class Journal {
           true,
         );
       }
+      this.growNote(pageId);
       this.detect(pageId);
       return this.state();
     });
@@ -683,6 +722,7 @@ export class Journal {
           true,
         );
       }
+      this.growNote(pageId);
       this.detect(pageId);
       return this.state();
     });

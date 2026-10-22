@@ -10,6 +10,7 @@ export default defineConfig({
     baseURL,
     viewport: { width: 1100, height: 950 },
     acceptDownloads: true,
+    serviceWorkers: 'block',
   },
   webServer: process.env.CI ? {
     command: 'pnpm preview --host 127.0.0.1 --port 4173',

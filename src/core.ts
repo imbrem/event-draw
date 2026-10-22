@@ -26,3 +26,5 @@ export * from './playback.ts';
 export * from './trace-codecs.ts';
 export * from './storage/schema.ts';
 export * from './storage/app-catalog.ts';
+
+export * from './note-pages.ts';

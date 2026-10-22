@@ -742,3 +742,23 @@ Shared storage/codecs and
 CAS abstractions can later move to Rust in covalence behind its TS/JS API;
 versioned raw byte blobs can preserve floating-point observations independently
 of float-free manifests.
+
+## Notes workspace and installation
+
+- New blank notes use a growing vertical canvas. One notebook can also contain fixed pages,
+  PDFs, images/SVGs and infinite whiteboards. **Menu → Pages** chooses inserted page types.
+- **Menu → Workspace** selects automatic, Notes (fill width) or Page (fit page). Growing notes
+  always fit width. Host preferences never rotate/scale stored observations.
+- Notes uses a floating palette and finger scrolling by default. Enable **Finger drawing**
+  under **Ink & actions** for a stylus reported as touch; browsers cannot reliably distinguish
+  every unofficial pencil. Two-finger gestures pan/pinch; palm rejection remains browser/device dependent.
+- On iPad, Safari **Share → Add to Home Screen**, with **Open as Web App** enabled if offered,
+  installs the fullscreen host. Launch that icon and rotate freely. No Xcode is required.
+- **Menu → Install Event Draw** reports offline shell readiness. **Save & update app** flushes
+  edits and explicitly activates an available build; there is no automatic drawing-time reload.
+- Verify on hardware: draw/scroll near the bottom, rotate, use text with the keyboard open,
+  background/reopen, export SQLite, then reopen offline with an embedded PDF. Check pressure,
+  coalesced samples and the behavior of your specific pencil in the raw viewer.
+
+See [surface/stack decisions](stack.md#writing-surface-and-spatial-queries) for rendering bounds,
+spatial index costs, installation boundaries and the native-host plan.

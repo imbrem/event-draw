@@ -10,6 +10,20 @@ The core and exchange APIs are reusable without the UI.
 in Safari on your iPad or a desktop browser. No sign-in is required.
 No Xcode or macOS update is needed for browser use.
 
+For fullscreen iPad use: **Safari → Share → Add to Home Screen**, enable **Open as Web App**
+if shown, then launch its icon. Portrait and landscape are both supported. The production
+app caches its static shell for offline use; embedded PDF/image sources stay in the notebook.
+**Menu → Install Event Draw** reports offline readiness and offers updates. Updates wait for
+an explicit **Save & update**, which flushes drafts before reloading. Export/import SQLite if
+Safari and the Home Screen app use separate storage.
+
+- New blank notes are **growing canvases**: scroll vertically and keep writing; ink and text extend the page.
+  A notebook can mix these with fixed A4/Letter pages, PDFs, images, SVGs and free-panning whiteboards.
+  **Menu → Document → New note layout** chooses a growing canvas or fixed pages.
+- On touch devices, **Notes workspace** fills the screen width with a floating palette. Pencil draws;
+  fingers scroll by default and two fingers pan/pinch. **Menu → Workspace** selects Notes or Page view
+  on any platform. Rotation changes the view, preserving stored coordinates.
+- The compose icon creates a writing note. **Menu → Pages** inserts other page types or more writing space.
 - Draw with Pen or Highlighter; choose a common color or a custom one.
 - Adjust width in the dock (eraser size is its diameter). **Menu → Toolbar → Minimal**
   keeps tools, undo/redo, colors and thickness; other controls move into Menu.
@@ -60,6 +74,21 @@ pnpm detect notebook.sqlite3 ./trusted-detector.mjs
 pnpm bench:strokes notebook.sqlite3  # lossless JSON/CBOR + zstd comparison
 pnpm bench:eraser                   # sustained batch vs incremental geometry
 ```
+
+## Stack and choices
+
+| Part | Dependencies / choice |
+| --- | --- |
+| App | TypeScript 7, Vite 8, vanilla DOM + Canvas 2D. Small focused modules; no UI framework or server. |
+| Notebooks | Official SQLite WASM 3.54.1 in a worker; OPFS persistence and a separate app/catalog SQLite file. Node tools inject `node:sqlite`. |
+| Traces | `cborg` 6 + `@bokuweb/zstd-wasm` 0.0.27: lossless CBOR + zstd, replaceable per payload. |
+| Content | PDF.js 6.4; markdown-it 15 + KaTeX 0.19; pdf-lib 1.17 + html2canvas-pro 2.5 for PDF export. PDF fonts/decoders ship locally. |
+| Installation | Web manifest + generated static-shell service worker; no additional PWA dependency. Both root and Pages subpath hosting work. |
+| Checks | Node 24+ test runner, Playwright Chrome/Chromium + WebKit; pnpm 12 lockfile. |
+
+`package.json` describes compatible dependency ranges; `pnpm-lock.yaml` pins reproducible installs.
+The DOM-free core is JavaScript/TypeScript, not yet a Rust or general WASM plugin ABI.
+[Stack and portability](docs/stack.md) explains each adapter and the remaining device limits.
 
 ## Architecture
 

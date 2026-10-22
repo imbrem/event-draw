@@ -1,3 +1,4 @@
+import type { BlankPageLayout } from './note-pages.ts';
 import type { State, Gesture, PageSource, ObjectInput, SelectionTransform, ClipboardInk } from './model.ts';
 import type { InkPolicy } from './ink.ts';
 
@@ -5,6 +6,7 @@ import type { InkPolicy } from './ink.ts';
 export const EDIT_COMMANDS = [
   'gesture',
   'addPage',
+  'extendNote',
   'createDocument',
   'renameDocument',
   'changePage',
@@ -22,8 +24,15 @@ export const EDIT_COMMANDS = [
 export type EditCommand = (typeof EDIT_COMMANDS)[number];
 export interface EditArguments {
   gesture: [gesture: Gesture, sessionId: number];
-  addPage: [documentId: number, afterPageId: number, width: number | null, height: number | null];
-  createDocument: [name: string];
+  addPage: [
+    documentId: number,
+    afterPageId: number,
+    width: number | null,
+    height: number | null,
+    layout?: BlankPageLayout,
+  ];
+  createDocument: [name: string, layout?: BlankPageLayout];
+  extendNote: [pageId: number];
   renameDocument: [id: number, name: string];
   changePage: [pageId: number, action: 'earlier' | 'later' | 'delete'];
   setPageSource: [pageId: number, source: PageSource];

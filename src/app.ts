@@ -1,3 +1,6 @@
+import { InstallableApp } from './platform/installable-app.ts';
+import { WritingWorkspace } from './ui/writing-workspace.ts';
+import { isWritingNote } from './note-pages.ts';
 import { StatusIndicators, defaultIndicators, type StatusIndicator } from './ui/status-indicators.ts';
 import { DrawingToolbar, type ToolbarConfig } from './ui/toolbar.ts';
 import { ThicknessControls } from './ui/thickness-controls.ts';
@@ -87,7 +90,17 @@ export function startApp(
   const currentDocument = (): Document | undefined => state.documents.find((d) => d.id === documentId);
   const pages = () => state.pages.filter((p) => p.document_id === documentId);
   const page = (): Page | undefined => pages().find((p) => p.id === pageId);
-  const shapes = () => state.shapes.filter((s) => s.page_id === pageId);
+  let inkSnapshot: State['shapes'] | undefined,
+    inkPage = 0,
+    pageInk: State['shapes'] = [];
+  const shapes = () => {
+    if (inkSnapshot !== state.shapes || inkPage !== pageId) {
+      inkSnapshot = state.shapes;
+      inkPage = pageId;
+      pageInk = state.shapes.filter((s) => s.page_id === pageId);
+    }
+    return pageInk;
+  };
   const selectPage = (id: number) => {
     void textEditor.flush();
     selected.clear();
@@ -169,11 +182,23 @@ export function startApp(
       if (value) error(value);
       refresh();
     },
+    canvas,
+    () => {
+      const box = view();
+      Object.assign(canvas.dataset, {
+        viewX: String(box.x),
+        viewY: String(box.y),
+        viewWidth: String(box.width),
+        viewHeight: String(box.height),
+      });
+      notebook.repaint();
+    },
   );
-  const view = () => {
+  const pageView = () => {
     const box = views.get(page());
     return page()?.kind === 'whiteboard' ? { ...box, height: box.width / surface.aspect } : box;
   };
+  const view = () => surface.inkView() ?? pageView();
   const pageObjects = new PageObjects(
     element('page-objects'),
     element('paper'),
@@ -318,6 +343,15 @@ export function startApp(
       );
     },
   });
+  const workspace = new WritingWorkspace(
+    element('app'),
+    element('workspace-mode'),
+    element('touch'),
+    (notes) => {
+      toolbar.setNotes(notes);
+      surface.setNotes(notes);
+    },
+  );
   function error(value: unknown) {
     notice.hidden = false;
     notice.className = 'error';
@@ -355,6 +389,10 @@ export function startApp(
       'document-name',
       'rename-document',
       'new-document',
+      'new-document-layout',
+      'new-writing-note',
+      'extend-note',
+      'workspace-mode',
       'pdf-file',
       'pdf-url',
       'import-url',
@@ -439,12 +477,13 @@ export function startApp(
     element('board-controls').hidden = !board;
     const painting = ['pen', 'highlighter', 'restyle'].includes(tools.value);
     element('paint-toolbar').hidden = !painting;
+    surface.update(page());
+    element('extend-note').hidden = !isWritingNote(page());
     const box = view();
     canvas.dataset.viewWidth = String(box.width);
     canvas.dataset.viewHeight = String(box.height);
     element('view-position').textContent =
       'x ' + Math.round(box.x) + ', y ' + Math.round(box.y) + ' · ' + Math.round(100000 / box.width) + '%';
-    surface.update(page(), currentDocument());
     notebook.repaint();
     extensions?.update({ state, documentId, pageId, sessionId, ready, busy });
     indicators.update({ state, documentId, pageId, sessionId, ready, busy });
@@ -452,7 +491,7 @@ export function startApp(
     pageObjects.update(
       state.objects.filter((o) => o.page_id === pageId),
       element<HTMLInputElement>('show-boxes').checked ? state.boxes.filter((b) => b.page_id === pageId) : [],
-      box,
+      pageView(),
       (!element('text-panel').hidden || tools.value === 'text' || tools.value === 'lasso') &&
         ready &&
         !failed &&
@@ -592,9 +631,25 @@ export function startApp(
   element('browse-pages').onclick = () => {
     void browser.show(state, documentId).catch(error);
   };
+  element('new-writing-note').onclick = () => {
+    void edit(
+      () => db.createDocument('Notes', 'note'),
+      () => {
+        chooseDocument(state.documents.at(-1)!.id);
+        options.open = false;
+      },
+    );
+  };
+  element('extend-note').onclick = () => {
+    void edit(() => db.extendNote(pageId));
+  };
   element('new-document').onclick = () => {
     void edit(
-      () => db.createDocument('Notes'),
+      () =>
+        db.createDocument(
+          'Notes',
+          element<HTMLSelectElement>('new-document-layout').value === 'fixed' ? 'fixed' : 'note',
+        ),
       () => chooseDocument(state.documents.at(-1)!.id),
     );
   };
@@ -633,7 +688,14 @@ export function startApp(
     )!;
     const before = new Set(state.pages.map((p) => p.id));
     void edit(
-      () => db.addPage(documentId, pageId, width, height),
+      () =>
+        db.addPage(
+          documentId,
+          pageId,
+          width,
+          height,
+          element<HTMLSelectElement>('page-size').value === 'note' ? 'note' : 'fixed',
+        ),
       () => selectPage(state.pages.find((p) => !before.has(p.id))!.id),
     );
   };
@@ -805,6 +867,21 @@ export function startApp(
     if (textEditor.dirty || unsaved.length)
       throw new Error('Save text drafts or export unsaved input before changing notebooks.');
   }
+  const installable = new InstallableApp(element('installable-app'), {
+    canReload: () => !active && !importing && !resetting && ownsDatabase,
+    async prepare() {
+      importing = true;
+      refresh();
+      try {
+        await flushNotebook();
+      } catch (error) {
+        importing = false;
+        refresh();
+        throw error;
+      }
+    },
+    error,
+  });
   const files = new NotebookFiles(db, session, {
     canReplace: () => ownsDatabase && !active && !writes && !importing && !resetting,
     canBackup: () => ready && !failed && !active && !writes && !importing && !textEditor.dirty,
@@ -1010,6 +1087,8 @@ export function startApp(
     });
   refresh();
   return () => {
+    installable.close();
+    workspace.close();
     toolbar.close();
     thickness.close();
     indicators.close();

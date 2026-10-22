@@ -1,3 +1,4 @@
+import { offlineShell } from './scripts/offline-shell.ts';
 import { defineConfig } from 'vite';
 import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -15,7 +16,7 @@ for (const directory of ['cmaps', 'standard_fonts', 'wasm', 'iccs']) {
 export default defineConfig({
   // Pages supplies its actual base path; workers, WASM and PDF assets follow it.
   base: process.env.VITE_BASE_PATH ?? '/',
-  plugins: [{
+  plugins: [offlineShell(), {
     name: 'local-pdf-assets',
     configureServer(server) {
       server.middlewares.use('/pdf-assets', (request, response, next) => {
