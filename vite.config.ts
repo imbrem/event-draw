@@ -13,6 +13,8 @@ for (const directory of ['cmaps', 'standard_fonts', 'wasm', 'iccs']) {
 }
 
 export default defineConfig({
+  // Pages supplies its actual base path; workers, WASM and PDF assets follow it.
+  base: process.env.VITE_BASE_PATH ?? '/',
   plugins: [{
     name: 'local-pdf-assets',
     configureServer(server) {

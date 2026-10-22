@@ -91,7 +91,7 @@ async function exported(page: Page, id = '#export-full') {
 test('draw, reload, inspect raw and app rows, undo, and compact with identical rendering', async ({ page }) => {
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
-  await page.goto('/');
+  await page.goto('./');
   await expect(page.locator('#storage')).toHaveText('Stored on this device');
   await stroke(page);
   await stroke(page, [[100, 220], [450, 260]]);
@@ -143,7 +143,7 @@ test('draw, reload, inspect raw and app rows, undo, and compact with identical r
 });
 
 test('both erasers split or delete geometry and undo restores original raw references', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('./');
   await expect(page.locator('#save-state')).toHaveText('Saved');
   await stroke(page);
   await page.getByRole('button', { name: 'Erase parts', exact: true }).click();
@@ -167,7 +167,7 @@ test('both erasers split or delete geometry and undo restores original raw refer
 });
 
 test('pages share one journal and whiteboards pan/zoom independently of raw geometry', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('./');
   await expect(page.locator('#save-state')).toHaveText('Saved');
   await stroke(page);
   await menu(page);
@@ -208,7 +208,7 @@ test('pages share one journal and whiteboards pan/zoom independently of raw geom
 
 test('narrow touch layout preserves cancelled pen observations without displaying them', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto('/');
+  await page.goto('./');
   await expect(page.locator('#save-state')).toHaveText('Saved');
   const tools = page.getByRole('group', { name: 'Tools', exact: true });
   await expect(tools.getByRole('button')).toHaveCount(7);
@@ -236,7 +236,7 @@ test('narrow touch layout preserves cancelled pen observations without displayin
 });
 
 test('tool buttons support keyboard selection, contextual controls, and drawing/page constraints', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('./');
   await expect(page.locator('#save-state')).toHaveText('Saved');
   const tools = page.getByRole('group', { name: 'Tools', exact: true });
   const pen = tools.getByRole('button', { name: 'Pen', exact: true });
@@ -284,10 +284,10 @@ test('tool buttons support keyboard selection, contextual controls, and drawing/
 });
 
 test('a second tab is blocked rather than silently drawing into an unrelated database', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('./');
   await expect(page.locator('#storage')).toHaveText('Stored on this device');
   const other = await page.context().newPage();
-  await other.goto('/');
+  await other.goto('./');
   await expect(other.locator('#storage')).toHaveText('Open in another tab');
   await expect(other.locator('#notice')).toContainText('Close that tab');
   await expect(other.getByRole('button', { name: 'Pen', exact: true })).toBeDisabled();
@@ -299,7 +299,7 @@ test('a second tab is blocked rather than silently drawing into an unrelated dat
 });
 
 test('reset is explicit, cancellation preserves data, and reset persists across reloads', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('./');
   await expect(page.locator('#save-state')).toHaveText('Saved');
   await stroke(page);
   await menu(page);
@@ -317,7 +317,7 @@ test('reset is explicit, cancellation preserves data, and reset persists across 
 });
 
 test('an unsupported on-disk schema can be exported and reset from the error screen', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('./');
   await expect(page.locator('#save-state')).toHaveText('Saved');
   await stroke(page);
   await page.route('**/__test_closed__', (route) => route.fulfill({ contentType: 'text/html', body: '<title>Closed notebook</title>' }));
@@ -350,7 +350,7 @@ test('an unsupported on-disk schema can be exported and reset from the error scr
     return change(await root.getDirectoryHandle('event-draw-v1'));
   });
   expect(changed).toBe(true);
-  await page.goto('/');
+  await page.goto('./');
   await expect(page.locator('#notice')).toContainText('Unsupported database schema version: 999');
   await expect(page.locator('#reset-local')).toBeVisible();
   const old = await exported(page, '#export-existing');
@@ -368,7 +368,7 @@ test('an unsupported on-disk schema can be exported and reset from the error scr
 });
 
 test('lasso selects ink, dragging changes placement only, and deletion and movement undo separately', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('./');
   await expect(page.locator('#save-state')).toHaveText('Saved');
   await stroke(page);
   await stroke(page, [[100, 300], [500, 300]]);
@@ -416,7 +416,7 @@ test('PDF file and URL imports deduplicate by hash; annotations survive navigati
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
   const bytes = readFileSync(pdfFixture), hash = 'sha256:' + createHash('sha256').update(bytes).digest('hex');
-  await page.goto('/');
+  await page.goto('./');
   await expect(page.locator('#save-state')).toHaveText('Saved');
   await expect(page.locator('#page-heading')).toHaveText('/1');
   await menu(page);
@@ -483,7 +483,7 @@ test('PDF file and URL imports deduplicate by hash; annotations survive navigati
 });
 
 test('failed URL and malformed PDF imports keep the notebook usable and intact', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('./');
   await stroke(page);
   await page.route('**/unavailable.pdf', (route) => route.abort());
   await menu(page);
@@ -499,7 +499,7 @@ test('failed URL and malformed PDF imports keep the notebook usable and intact',
 });
 
 test('blank document names, page ordering and deletion are separate from annotation identity', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('./');
   await stroke(page);
   await menu(page);
   await page.locator('#document-name').fill('Notebook');
@@ -529,7 +529,7 @@ test('blank document names, page ordering and deletion are separate from annotat
 });
 
 test('database diagnostics and timestamped raw replay are read-only and cancel on navigation', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('./');
   await expect(page.locator('#save-state')).toHaveText('Saved');
   await page.locator('#canvas').evaluate((canvas) => {
     canvas.setPointerCapture = () => {};
@@ -597,7 +597,7 @@ async function penTrace(page: Page) {
 }
 
 test('pressure output and per-trace experimental comparison replay without writing history', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('./');
   await penTrace(page);
   const before = await exported(page);
   const original = before.prepare('SELECT * FROM stroke_events').all();
@@ -632,7 +632,7 @@ test('pressure output and per-trace experimental comparison replay without writi
 });
 
 test('highlighter has uniform per-contact translucency and touch restyling retains trace/output identity', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('./');
   await expect(page.locator('#save-state')).toHaveText('Saved');
   await page.getByRole('button', { name: 'Highlighter', exact: true }).click();
   await stroke(page);
@@ -665,7 +665,7 @@ test('highlighter has uniform per-contact translucency and touch restyling retai
 });
 
 test('selected traces get a new immutable processing version as one undoable edit', async ({ page }) => {
-  await page.goto('/'); await penTrace(page);
+  await page.goto('./'); await penTrace(page);
   await page.getByRole('button', { name: 'Lasso select', exact: true }).click();
   await stroke(page, [[80, 100], [450, 100], [450, 230], [80, 230], [80, 100]]);
   await expect(page.locator('#selection-count')).toHaveText('1 selected');
@@ -693,7 +693,7 @@ test('Markdown/math notes autosave, survive page changes and reload, export draf
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
   page.on('response', (response) => { if (response.status() >= 400) errors.push(response.status() + ' ' + response.url()); });
-  await page.goto('/'); await expect(page.locator('#save-state')).toHaveText('Saved');
+  await page.goto('./'); await expect(page.locator('#save-state')).toHaveText('Saved');
   await page.locator('#toggle-text').click();
   await page.locator('#add-page-text').click();
   const source = page.getByRole('textbox', { name: 'Markdown note', exact: true });
@@ -743,7 +743,7 @@ test('typing during an in-flight text save commits the latest draft without losi
       else send();
     };
   });
-  await page.goto('/'); await expect(page.locator('#save-state')).toHaveText('Saved');
+  await page.goto('./'); await expect(page.locator('#save-state')).toHaveText('Saved');
   await page.locator('#toggle-text').click();
   await page.locator('#add-page-text').click();
   const source = page.getByRole('textbox', { name: 'Markdown note', exact: true });
@@ -765,7 +765,7 @@ test('typing during an in-flight text save commits the latest draft without losi
 
 test('multiple linked notes and positioned text/math share content renderers, placement, deletion and undo', async ({ page }) => {
   const errors: string[] = []; page.on('pageerror', (e) => errors.push(e.message));
-  await page.goto('/'); await expect(page.locator('#save-state')).toHaveText('Saved');
+  await page.goto('./'); await expect(page.locator('#save-state')).toHaveText('Saved');
   await page.locator('#toggle-text').click(); await page.locator('#add-page-text').click();
   const source = page.locator('#text-source');
   await source.fill('# On the page\n**Given** $x=5$'); await expect(page.locator('#text-status')).toHaveText('Saved');
@@ -803,7 +803,7 @@ test('multiple linked notes and positioned text/math share content renderers, pl
 });
 
 test('detected boxes link constituent strokes and finish/break events; erasure, undo, rotation and compact export preserve provenance', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('./');
   for (const points of [[[100, 100], [400, 100]], [[400, 100], [400, 300]], [[400, 300], [100, 300]], [[100, 300], [100, 100]]]) await stroke(page, points);
   await expect(page.locator('.detected-box')).toHaveCount(1);
   await page.getByRole('button', { name: 'Lasso select', exact: true }).click();
@@ -833,7 +833,7 @@ test('detected boxes link constituent strokes and finish/break events; erasure, 
 });
 
 test('speed/pressure formulas are configurable in notebook and per-trace preview without changing raw samples', async ({ page }) => {
-  await page.goto('/'); await expect(page.locator('#save-state')).toHaveText('Saved');
+  await page.goto('./'); await expect(page.locator('#save-state')).toHaveText('Saved');
   await page.locator('#ink-settings').evaluate((e) => { (e as HTMLDetailsElement).open = true; });
   await page.getByLabel('Pressure policy', { exact: true }).selectOption('pressure-speed@1');
   await page.getByLabel('Pressure weight', { exact: true }).fill('0'); await page.getByLabel('Speed weight', { exact: true }).fill('1');
@@ -856,7 +856,7 @@ test('speed/pressure formulas are configurable in notebook and per-trace preview
 
 test('notebook files reopen atomically, recovery restores replacement, and drawn export omits linked notes',async({page})=>{
   const errors:string[]=[];page.on('pageerror',(e)=>errors.push(e.message));
-  await page.goto('/');await stroke(page);await page.locator('#toggle-text').click();await page.locator('#add-linked-note').click();await page.locator('#text-source').fill('private provenance');await page.locator('#close-text').click();
+  await page.goto('./');await stroke(page);await page.locator('#toggle-text').click();await page.locator('#add-linked-note').click();await page.locator('#text-source').fill('private provenance');await page.locator('#close-text').click();
   const path=await download(page,'#export-full'),bytes=readFileSync(path!);
   const drawn=await exported(page,'#export-drawn');try{expect(drawn.prepare('SELECT * FROM visible_shapes').all()).toHaveLength(1);expect(drawn.prepare('SELECT * FROM visible_objects').all()).toHaveLength(0);expect(drawn.prepare('SELECT * FROM app_events').all()).toHaveLength(1);}finally{drawn.close();}
   await menu(page);await page.locator('#new-notebook').click();await expect(page.locator('#counts')).toHaveText('0 visible · 0 raw strokes · 0 events');
@@ -870,7 +870,7 @@ test('notebook files reopen atomically, recovery restores replacement, and drawn
 
 test('mixed SVG, image, PDF and blank pages export as a portable notebook and annotated PDF',async({page})=>{
   const errors:string[]=[];page.on('pageerror',(e)=>errors.push(e.message));
-  await page.goto('/');await expect(page.locator('#save-state')).toHaveText('Saved');
+  await page.goto('./');await expect(page.locator('#save-state')).toHaveText('Saved');
   const svg=Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="600" height="400"><rect width="600" height="400" fill="#ffe080"/><circle cx="300" cy="200" r="80" fill="#c05040"/></svg>');
   await menu(page);await page.locator('#image-file').setInputFiles({name:'drawing.svg',mimeType:'image/svg+xml',buffer:svg});await expect(page.locator('#page-number')).toHaveValue('2');await expect(page.locator('#save-state')).toHaveText('Saved');await stroke(page,[[60,50],[500,70]]);
   await menu(page);await page.locator('#image-as-object').check();await page.locator('#image-file').setInputFiles({name:'object.svg',mimeType:'image/svg+xml',buffer:svg});await expect(page.locator('.page-object img')).toHaveCount(1);await expect(page.locator('.page-object img')).toBeVisible();await page.screenshot({path:'test-results/svg-page.png',fullPage:true});
@@ -887,7 +887,7 @@ test('mixed SVG, image, PDF and blank pages export as a portable notebook and an
 });
 
 test('redo, duplicate, rotation and object dragging are event-backed without duplicating raw captures',async({page})=>{
-  await page.goto('/');await stroke(page);await page.keyboard.press('Meta+a');await expect(page.locator('#selection-count')).toHaveText('1 selected');
+  await page.goto('./');await stroke(page);await page.keyboard.press('Meta+a');await expect(page.locator('#selection-count')).toHaveText('1 selected');
   await page.locator('#duplicate-selection').click();await expect(page.locator('#counts')).toContainText('2 visible · 1 raw strokes');await page.locator('#rotate-selection').click();
   await page.locator('#undo').click();await page.locator('#undo').click();await expect(page.locator('#counts')).toContainText('1 visible');await page.locator('#redo').click();await expect(page.locator('#counts')).toContainText('2 visible');
   await page.locator('#toggle-text').click();await page.locator('#add-page-text').click();await page.locator('#text-source').fill('Move me $x=5$');await expect(page.locator('#text-status')).toHaveText('Saved');
@@ -896,7 +896,7 @@ test('redo, duplicate, rotation and object dragging are event-backed without dup
 });
 
 test('two-finger navigation cancels accidental ink, pen rejects palms, and interruption retains observations',async({page})=>{
-  await page.goto('/');await expect(page.locator('#save-state')).toHaveText('Saved');
+  await page.goto('./');await expect(page.locator('#save-state')).toHaveText('Saved');
   const size=await page.locator('#paper').boundingBox();
   await page.locator('#canvas').evaluate((canvas)=>{
     canvas.setPointerCapture=()=>{};const rect=canvas.getBoundingClientRect();const send=(type:string,id:number,x:number,y:number,pointerType='touch')=>canvas.dispatchEvent(new PointerEvent(type,{pointerId:id,pointerType,isPrimary:id===10,clientX:rect.x+x,clientY:rect.y+y,buttons:type==='pointerup'?0:1,button:0,bubbles:true}));
@@ -908,7 +908,7 @@ test('two-finger navigation cancels accidental ink, pen rejects palms, and inter
 });
 
 test('page picker searches linked notes and PDF text and exposes selectable PDF text',async({page})=>{
-  const errors:string[]=[];page.on('pageerror',(e)=>errors.push(e.message));await page.goto('/');await expect(page.locator('#save-state')).toHaveText('Saved');await menu(page);await page.locator('#pdf-file').setInputFiles(pdfFixture.pathname);await expect(page.locator('#save-state')).toHaveText('Saved');
+  const errors:string[]=[];page.on('pageerror',(e)=>errors.push(e.message));await page.goto('./');await expect(page.locator('#save-state')).toHaveText('Saved');await menu(page);await page.locator('#pdf-file').setInputFiles(pdfFixture.pathname);await expect(page.locator('#save-state')).toHaveText('Saved');
   await page.locator('#toggle-text').click();await page.locator('#add-linked-note').click();await page.locator('#text-source').fill('needle algebra');await page.locator('#close-text').click();await expect(page.locator('#save-state')).toHaveText('Saved');
   await page.locator('#browse-pages').click();await expect(page.locator('.page-thumbnail')).toHaveCount(3);await page.locator('#reader-mode').click();await expect(page.locator('.continuous-reader')).toBeVisible();await expect(page.locator('.page-thumbnail canvas').first()).toBeVisible();await page.screenshot({path:'test-results/continuous-reader.png',fullPage:true});await page.locator('#reader-mode').click();await page.getByLabel('Search notebook').fill('needle');await page.locator('#notebook-search-form button').click();await expect(page.locator('#search-status')).toContainText('1 matching pages');await page.locator('.search-results button').click();
   await page.locator('#ink-settings').evaluate((e)=>{(e as HTMLDetailsElement).open=true;});await page.locator('#select-pdf-text').check();await expect(page.locator('#pdf-text span')).not.toHaveCount(0);await expect(page.locator('#pdf-text')).toBeVisible();await page.screenshot({path:'test-results/pdf-text-layer.png',fullPage:true});expect(errors).toEqual([]);

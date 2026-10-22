@@ -19,7 +19,7 @@ Open http://localhost:5173. Draw with a mouse, pen, or finger. Turn off
 touch, with a short guard after pen-up. This is heuristic palm filtering, not native digitizer rejection. On a tablet, use a trusted HTTPS origin for persistent storage.
 Plain LAN HTTP cannot provide browser filesystem storage; where supported,
 the app uses an explicitly labelled temporary database. Export before closing.
-HTTPS hosting/tunnelling is not configured here.
+The internal deployment below provides a stable HTTPS origin.
 
 Each exported SQLite file is a notebook. The app autosaves one working copy in this browser
 profile and origin (including port). **Menu → Open notebook**, **New notebook**, and
@@ -57,6 +57,39 @@ Browser tests use isolated profiles, including a temporary on-disk WebKit
 profile because ephemeral WebKit contexts do not support OPFS. SQLite WASM
 runs in a worker with OPFS SAH-pool persistence. No special HTTP headers are
 needed for this VFS. Runtime assets are served locally; no CDN is needed.
+
+## Internal deployment
+
+Open https://sturdy-bassoon-w9lk351.pages.github.io/ on your Mac or in Safari on
+your iPad/iPhone. Sign in to GitHub with an account that can read
+`hiloopai/event-draw` (complete organization SSO if prompted). This Pages site
+is private, with HTTPS enforced; repository privacy alone would not guarantee
+private Pages access.
+
+Start with **Menu → Open PDF**, or draw on the blank page. **Text** adds positioned
+Markdown/math, and **Pages / Search** opens the page browser. Check that storage
+says **Stored on this device**. If an old schema is rejected, export the existing
+SQLite file and use **Reset local notebook**; this prototype has no migrations.
+
+Notebooks and imported source files stay in that browser's local storage. Deployment
+does not add synchronization or upload notebooks to GitHub. To transfer work between
+devices, use **Save notebook · full history**, then **Menu → Open notebook** on the
+other device. Embedded PDF/image/SVG blobs are included by default. Localhost and
+the Pages site have separate working copies.
+
+[The CI workflow](.github/workflows/pages.yml) runs unit tests, type checking/build
+and the browser suite in Chromium and WebKit on pull requests and pushes to `main`.
+Browser checks use the production build at `/event-draw/`, including workers and
+WASM, to exercise project-path asset resolution. CI starts its own preview server;
+local browser checks use the already-running dev/preview server. Use a trailing slash
+when setting `TEST_BASE_URL` to a subpath.
+
+After checks pass on `main`, CI reads the configured private Pages URL, builds for
+its actual base path, and deploys via the `github-pages` environment. That environment
+allows only `main`; the workflow verifies `public: false` and never automatically
+enables a missing Pages site. Manual redeployment is available through
+**Actions → Check and deploy private Pages → Run workflow** on `main`.
+The workflow uses the built-in `GITHUB_TOKEN`, without a stored deployment secret.
 
 ## Notebook and database viewers
 
@@ -164,7 +197,8 @@ An unofficial pencil may report a finger or fixed/default pressure. The raw
 viewer and capture-session capability metadata help distinguish observations
 from actual hardware support; an exposed field is not proof of a measurement.
 
-For a quick drawing-only check, open `http://<Mac-LAN-IP>:5173` on the same Wi-Fi
+The private Pages URL above is the easiest tablet test and needs no Mac server.
+For a quick drawing-only local check, open `http://<Mac-LAN-IP>:5173` on the same Wi-Fi
 while `pnpm dev` runs. macOS may request firewall access. LAN HTTP may require
 session-only storage; export before closing. For a meaningful persistence test,
 use a trusted HTTPS URL. One convenient temporary option is Cloudflare's quick
