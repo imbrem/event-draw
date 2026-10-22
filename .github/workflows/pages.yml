@@ -35,6 +35,7 @@ jobs:
         run: pnpm test:browser --reporter=line
         env:
           TEST_BASE_URL: http://127.0.0.1:4173/event-draw/
+          VITE_BASE_PATH: /event-draw/
 
   deploy:
     name: Deploy internal site
